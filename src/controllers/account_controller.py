@@ -1,0 +1,114 @@
+from controllers.base_controller import BaseController
+from dtos import AccountDTO
+from errors import AccountCannotBeClosed, AccountNotFound, InvalidParameter, InvalidStatusTransition
+from models import Account, OutboxEvent
+from repositories import AccountRepository, LedgerRepository, OutboxRepository
+from utils.cursor import decode_cursor, encode_cursor
+from utils.db_retry import retry_on_deadlock
+from utils.ids import parse_uuid
+
+# Máquina de estados da conta (fluxo v6). O que não está aqui é proibido.
+# REQUESTED e REJECTED e CLOSED não têm saída: REJECTED fica como registro
+# de auditoria e CLOSED é definitivo.
+ALLOWED_TRANSITIONS = {
+    Account.PENDING: {Account.ACTIVE, Account.REJECTED},
+    Account.ACTIVE: {Account.BLOCKED, Account.CLOSED},
+    Account.BLOCKED: {Account.ACTIVE, Account.CLOSED},
+}
+
+
+class AccountController(BaseController):
+    def __init__(self) -> None:
+        super().__init__(__name__)
+        self.account_repository = AccountRepository(self.context)
+        self.ledger_repository = LedgerRepository(self.context)
+        self.outbox_repository = OutboxRepository(self.context)
+
+    def get_by_id(self, raw_account_id: str) -> dict:
+        account = self._get_account_or_raise(raw_account_id)
+        return AccountDTO.obj_to_dict(account)
+
+    @retry_on_deadlock()
+    def update_status(self, raw_account_id: str, new_status: str, reason: str) -> dict:
+        """Muda o status da conta, conferindo a máquina de estados.
+
+        A conta é travada ANTES da checagem. Sem o lock, um PIX poderia
+        cair entre o "saldo é zero" e o "encerrada", e a conta fecharia
+        com dinheiro dentro.
+        """
+        account_id = parse_uuid(raw_account_id)
+        locked = {}
+        if account_id is not None:
+            locked = self.account_repository.lock_customer_accounts([account_id])
+
+        account = locked.get(account_id)
+        if account is None:
+            raise AccountNotFound(raw_account_id)
+
+        old_status = account.status
+        if new_status not in ALLOWED_TRANSITIONS.get(old_status, set()):
+            raise InvalidStatusTransition(old_status, new_status)
+
+        if new_status == Account.CLOSED:
+            self._check_can_close(account)
+
+        self.account_repository.update_status(account, new_status, reason)
+        self.outbox_repository.add(
+            OutboxEvent.ACCOUNT_STATUS_CHANGED,
+            "account",
+            account.id,
+            {"from": old_status, "to": new_status, "reason": reason},
+        )
+
+        self.session.commit()
+
+        return AccountDTO.obj_to_dict(account)
+
+    def get_statement(self, raw_account_id: str, limit: int, cursor: str) -> dict:
+        account = self._get_account_or_raise(raw_account_id)
+
+        try:
+            after = decode_cursor(cursor)
+            if after is not None:
+                int(after[1])
+        except (ValueError, TypeError, UnicodeDecodeError):
+            raise InvalidParameter("cursor is not valid")
+
+        entries = self.ledger_repository.list_statement(account.id, limit, after)
+
+        next_cursor = None
+        if len(entries) > limit:
+            entries = entries[:limit]
+            last = entries[-1]
+            next_cursor = encode_cursor(last.created_at, last.id)
+
+        return {
+            "account_id": str(account.id),
+            "balance": account.balance,
+            "held_balance": account.held_balance,
+            "available_balance": account.available_balance,
+            "items": AccountDTO.statement_items(entries),
+            "next_cursor": next_cursor,
+        }
+
+    def _check_can_close(self, account: Account) -> None:
+        if account.balance != 0:
+            raise AccountCannotBeClosed(f"balance is {account.balance}, must be 0")
+
+        if account.held_balance != 0:
+            raise AccountCannotBeClosed(f"held balance is {account.held_balance}, must be 0")
+
+        if self.account_repository.has_active_loan(account.id):
+            raise AccountCannotBeClosed("there is an active loan")
+
+    def _get_account_or_raise(self, raw_account_id: str) -> Account:
+        account_id = parse_uuid(raw_account_id)
+        account = None
+
+        if account_id is not None:
+            account = self.account_repository.get_customer_account(account_id)
+
+        if account is None:
+            raise AccountNotFound(raw_account_id)
+
+        return account

@@ -687,7 +687,40 @@ mesmo código.
 
 ---
 
-## 8. A licença
+## 8. A solução do time: conta digital + microcrédito
+
+Em cima do projeto base, o time constrói a infraestrutura de um banco
+de microcrédito. O que existe, o que falta e cada código de erro estão em
+**`docs/api-contract.md`** — comece por lá.
+
+Resumo do que já responde: cadastro de cliente com abertura de conta,
+consulta e mudança de status da conta, extrato paginado, PIX recebido
+(webhook do SPI) e transferência TEF com tarifa e idempotência.
+
+O dinheiro entra pelo webhook do SPI, como no mundo real — não existe
+rota de "depósito". Para testar na mão:
+
+```bash
+# 1. abrir conta (guarde o account_id e o account_number)
+curl -X POST http://localhost:3000/customers \
+  -H "INTERNAL-TOKEN: default_token" -H "Content-Type: application/json" \
+  -d '{"cpf":"39053344705","name":"Ana","birth_date":"1990-01-01","type":"INDIVIDUAL","annual_revenue":20000000}'
+
+# 2. receber um PIX de R$ 500,00
+curl -X POST http://localhost:3000/webhooks/spi \
+  -H "INTERNAL-TOKEN: default_token" -H "Content-Type: application/json" \
+  -d '{"event":"RECEIVED","external_id":"E0001","amount":50000,"destination_account":{"branch":"0001","number":"SEU_ACCOUNT_NUMBER"},"sender":{"name":"Fulano","document":"52998224725","ispb":"00000000"}}'
+
+# 3. ver o extrato
+curl http://localhost:3000/accounts/SEU_ACCOUNT_ID/statement -H "INTERNAL-TOKEN: default_token"
+```
+
+> Mudou o `database/database.sql`? Lembre do `docker compose down -v`
+> (seção 3). E nunca use o caractere de porcentagem nesse arquivo, nem em
+> comentário: o reset dos testes roda o SQL pelo psycopg2, que trata esse
+> caractere como marcador de parâmetro.
+
+## 9. A licença
 
 Este projeto é **MIT** — pode usar, copiar, modificar e levar para o seu
 portfólio, inclusive em trabalho pago. O único pedido é manter o arquivo

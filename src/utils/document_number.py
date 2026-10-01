@@ -62,3 +62,44 @@ def is_valid_cpf(document_number: str) -> bool:
             return False
 
     return True
+
+
+CNPJ_LENGTH = 14
+
+CNPJ_FIRST_DIGIT_WEIGHTS = [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+CNPJ_SECOND_DIGIT_WEIGHTS = [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2]
+
+
+def is_valid_cnpj(document_number: str) -> bool:
+    """Diz se um CNPJ existe de verdade. Mesma lógica do CPF, outros pesos.
+
+    Obrigatório para o MEI: é o CNPJ que prova a atividade produtiva que
+    o microcrédito (Res. CMN 4.854/2020) exige financiar.
+    """
+    digits = []
+    for character in document_number:
+        if character.isdigit():
+            digits.append(int(character))
+
+    if len(digits) != CNPJ_LENGTH:
+        return False
+
+    if len(set(digits)) == 1:
+        return False
+
+    for weights in (CNPJ_FIRST_DIGIT_WEIGHTS, CNPJ_SECOND_DIGIT_WEIGHTS):
+        position = len(weights)
+        total = 0
+        for index, weight in enumerate(weights):
+            total = total + digits[index] * weight
+
+        remainder = total % 11
+        if remainder < 2:
+            expected_digit = 0
+        else:
+            expected_digit = 11 - remainder
+
+        if digits[position] != expected_digit:
+            return False
+
+    return True

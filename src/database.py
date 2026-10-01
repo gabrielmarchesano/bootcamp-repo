@@ -101,7 +101,17 @@ from sqlalchemy.orm import Session, sessionmaker
 from constants import DATABASE_URL
 
 
-engine = create_engine(DATABASE_URL, pool_size=5, pool_recycle=600, pool_pre_ping=True)
+# O fuso da sessão é fixado em America/Sao_Paulo: as regras de negócio do
+# banco (limite noturno, dia útil, vencimento) são todas em horário de
+# Brasília. Os timestamps continuam gravados como TIMESTAMPTZ (instante
+# absoluto); o fuso só muda como o Postgres os LÊ e os converte.
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=5,
+    pool_recycle=600,
+    pool_pre_ping=True,
+    connect_args={"options": "-c timezone=America/Sao_Paulo"},
+)
 
 SessionLocal = sessionmaker(bind=engine, autoflush=False)
 

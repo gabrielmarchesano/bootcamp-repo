@@ -1,0 +1,16 @@
+{
+  "title": "PatchAccountStatus",
+  "type": "object",
+  "properties": {
+    "status": {
+      "enum": ["ACTIVE", "REJECTED", "BLOCKED", "CLOSED"]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    }
+  },
+  "required": ["status", "reason"],
+  "additionalProperties": false
+}

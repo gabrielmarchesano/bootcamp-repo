@@ -28,3 +28,15 @@ class RandomGenerator:
         )
 
         return cnpj_number
+
+    @staticmethod
+    def generate_cpf_digits() -> str:
+        """CPF válido só com dígitos, sem a sequência de dígitos iguais."""
+        while True:
+            cpf = "".join(character for character in RandomGenerator.generate_cpf() if character.isdigit())
+            if len(set(cpf)) > 1:
+                return cpf
+
+    @staticmethod
+    def generate_cnpj_digits() -> str:
+        return "".join(character for character in RandomGenerator.generate_cnpj() if character.isdigit())

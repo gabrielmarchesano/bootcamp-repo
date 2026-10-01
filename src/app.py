@@ -9,7 +9,14 @@ from middlewares import (
     register_request_logger_middleware,
     register_session_manager_middleware,
 )
-from resources import HealthCheckResource, SampleEntityResource
+from resources import (
+    AccountResource,
+    CustomerResource,
+    HealthCheckResource,
+    SampleEntityResource,
+    TransferResource,
+    WebhookResource,
+)
 from utils.logger import setup_logging
 
 
@@ -157,6 +164,28 @@ def create_app() -> FastAPI:
         sample_entity_resource.on_get_list,
         methods=["GET"],
     )
+
+    # ────────────────────────────────────────────────────────────────
+    # Conta digital + microcrédito — contrato em docs/api-contract.md
+    # ────────────────────────────────────────────────────────────────
+    customer_resource = CustomerResource()
+    account_resource = AccountResource()
+    transfer_resource = TransferResource()
+    webhook_resource = WebhookResource()
+
+    # A · Clientes e contas
+    application.add_api_route("/customers", customer_resource.on_post, methods=["POST"])
+    application.add_api_route("/customers/{customer_id}", customer_resource.on_get_by_id, methods=["GET"])
+    application.add_api_route("/customers/{customer_id}", customer_resource.on_patch_by_id, methods=["PATCH"])
+    application.add_api_route("/accounts/{account_id}", account_resource.on_get_by_id, methods=["GET"])
+    application.add_api_route("/accounts/{account_id}/status", account_resource.on_patch_status, methods=["PATCH"])
+    application.add_api_route("/accounts/{account_id}/statement", account_resource.on_get_statement, methods=["GET"])
+
+    # C · Transferências
+    application.add_api_route("/transfers", transfer_resource.on_post, methods=["POST"])
+    application.add_api_route("/transfers/{transfer_id}", transfer_resource.on_get_by_id, methods=["GET"])
+    application.add_api_route("/accounts/{account_id}/transfers", account_resource.on_get_transfers, methods=["GET"])
+    application.add_api_route("/webhooks/spi", webhook_resource.on_post_spi, methods=["POST"])
 
     register_error_handlers(application)
 

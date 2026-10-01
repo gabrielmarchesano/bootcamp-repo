@@ -1,0 +1,13 @@
+{
+  "title": "PatchCustomer",
+  "type": "object",
+  "properties": {
+    "annual_revenue": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100000000000
+    }
+  },
+  "required": ["annual_revenue"],
+  "additionalProperties": false
+}
