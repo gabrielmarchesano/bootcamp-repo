@@ -35,7 +35,8 @@
   "required": ["cpf", "name", "birth_date", "type", "annual_revenue"],
   "additionalProperties": false,
   "if": {
-    "properties": { "type": { "const": "MEI" } }
+    "properties": { "type": { "const": "MEI" } },
+    "required": ["type"]
   },
   "then": {
     "required": ["cnpj"]

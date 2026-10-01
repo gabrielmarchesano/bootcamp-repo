@@ -9,7 +9,7 @@ from utils.schema_handler import SchemaHandler
 class WebhookResource:
     """Entradas dos trilhos de pagamento (mock).
 
-    Protegido pelo INTERNAL-TOKEN, como o webhook do sample_entity. O
+    Protegido pelo INTERNAL-TOKEN, como todas as rotas internas. O
     contrato v6 previa assinatura HMAC (X-Signature) — que é o certo
     quando o trilho é de verdade e está fora da nossa rede. Fica para
     quando existir um SPI que não seja o nosso mock.

@@ -80,8 +80,8 @@ class LedgerRepository:
         Com keyset, a página 2 começa "depois desta linha aqui", e o que
         entrou no topo não mexe nela.
 
-        `limit + 1` pela mesma razão do sample_entity: o extra só diz se
-        existe próxima página.
+        `limit + 1`: a linha extra não sai na resposta, só diz se existe
+        próxima página.
         """
         query = self.session.query(LedgerEntry).filter(LedgerEntry.account_id == account_id)
 

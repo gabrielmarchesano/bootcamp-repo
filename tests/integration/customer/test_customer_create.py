@@ -58,6 +58,20 @@ class TestCustomerCreate:
             assert status == 400, payload
             assert response["code"] == "QIT000001"
 
+    def test_empty_body_points_to_a_missing_required_field(self):
+        """Corpo vazio tem que reclamar de um campo que realmente falta.
+
+        Sem o `"required": ["type"]` dentro do `if` do schema, um JSON sem
+        `type` passa no `if` (propriedade ausente não é testada) e a regra
+        "MEI exige CNPJ" dispara — a API diria "falta o cnpj" para quem
+        nem pediu conta MEI.
+        """
+        status, response = RequestGenerator.POST_customer({})
+
+        assert status == 400
+        assert response["code"] == "QIT000001"
+        assert "cnpj" not in response["description"]
+
     def test_schema_refuses_formatted_documents_and_float_money(self):
         """Documento só com dígitos, dinheiro só inteiro (centavos).
 
@@ -97,8 +111,7 @@ class TestCustomerCreate:
     def test_underage_is_created_as_rejected(self):
         """Menor de idade NÃO leva erro: o cadastro existe, com a conta REJECTED.
 
-        É a diferença para o sample_entity, e é de propósito: a tentativa
-        precisa ficar registrada (trilha de PLD).
+        É de propósito: a tentativa precisa ficar registrada (trilha de PLD).
         """
         payload = PayloadGenerator.create_customer_payload(birth_date=birth_date_for_age(17))
 

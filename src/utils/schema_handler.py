@@ -81,8 +81,8 @@ class SchemaHandler:
 
         Usa-se assim, no método do resource que recebe corpo:
 
-            class SampleEntityResource:
-                @SchemaHandler.validate("post_sample_entity.json")
+            class CustomerResource:
+                @SchemaHandler.validate("post_customer.json")
                 def on_post(self, payload: dict) -> dict:
 
         O nome do arquivo é o único argumento, e ele aponta pra dentro
@@ -90,7 +90,7 @@ class SchemaHandler:
         DELETE — não leva decorator nenhum: não há o que conferir.
 
         Repare que o endereço HTTP não aparece aqui. Quem liga
-        "/sample_entity" a este método é o src/app.py, e é de propósito:
+        "/customers" a este método é o src/app.py, e é de propósito:
         o resource cuida do CONTEÚDO da requisição, o app.py cuida do
         ENDEREÇO dela.
         """
@@ -124,13 +124,13 @@ class SchemaHandler:
 
         Usa-se assim, num metodo que recebe a requisicao inteira:
 
-            class SampleEntityResource:
-                @SchemaHandler.validate_query_params("get_sample_entities.json")
-                def on_get_list(self, request: Request) -> JSONResponse:
+            class AccountResource:
+                @SchemaHandler.validate_query_params("get_statement.json")
+                def on_get_statement(self, account_id: str, request: Request) -> JSONResponse:
 
         Por que ler do `request` em vez dos argumentos da funcao: o
         FastAPI so entrega o que ele mesmo declarou. Um parametro com o
-        nome errado — `?stauts=pending` — nunca chegaria aqui, e passaria
+        nome errado — `?limt=10` — nunca chegaria aqui, e passaria
         batido como passa hoje em qualquer API que so declara o que
         conhece. Lendo a query string crua, o `additionalProperties:
         false` do schema pega o engano e responde dizendo o nome errado.

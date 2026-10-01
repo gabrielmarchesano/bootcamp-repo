@@ -89,8 +89,8 @@ Sem mudança em relação ao contrato v6: emissão, autorização (HOLD/reserva)
 
 | Código | HTTP | Nome no contrato v6 | Quando |
 |---|---|---|---|
-| `QIT001003` | 422 | — | CPF com dígito verificador errado (reaproveitado do projeto base) |
-| `QIT001007` | 422 | — | data que não existe no calendário (reaproveitado) |
+| `QIT001003` | 422 | — | CPF com dígito verificador errado (herdado do projeto base) |
+| `QIT001007` | 422 | — | data que não existe no calendário (herdado do projeto base) |
 | `QIT001008` | 404 | — | cliente não encontrado |
 | `QIT001009` | 404 | — | conta não encontrada (inclui conta interna e id que não é UUID) |
 | `QIT001010` | 409 | `CUSTOMER_ALREADY_EXISTS` | CPF ou CNPJ já cadastrado |
@@ -105,7 +105,7 @@ Sem mudança em relação ao contrato v6: emissão, autorização (HOLD/reserva)
 | `QIT001019` | 422 | `NIGHT_LIMIT_EXCEEDED` | teto noturno estourado |
 | `QIT001020` | 404 | — | transferência não encontrada |
 
-Próximo livre: `QIT001021`.
+Próximo livre: `QIT001021`. Aposentados, não reutilizar: `QIT001001`, `001002`, `001004`, `001005`, `001006` (eram do `sample_entity`, removido).
 
 ---
 
@@ -113,7 +113,7 @@ Próximo livre: `QIT001021`.
 
 | v6 dizia | Ficou | Motivo |
 |---|---|---|
-| `X-API-Key` por chamador · HMAC nos webhooks | `INTERNAL-TOKEN` | Padrão do projeto base; o webhook do `sample_entity` já usa o token. HMAC volta quando houver trilho fora da nossa rede |
+| `X-API-Key` por chamador · HMAC nos webhooks | `INTERNAL-TOKEN` | Padrão do projeto base: um token só para todas as rotas internas. HMAC volta quando houver trilho fora da nossa rede |
 | `{"error": {"code": "INSUFFICIENT_BALANCE"}}` | Envelope `QIT0…` do projeto base | Um formato só na API inteira; a tabela acima faz a ponte |
 | Validação 422 | 400 formato · 422 valor | Semântica do projeto base (README, seção 7) |
 | Ledger `TED_FEE` | `TRANSFER_FEE` + coluna `method` | Tarifa existe em TEF também; o meio já está na linha |

@@ -1,6 +1,6 @@
 # Como o projeto é organizado
 
-Dentro de `src/` tem dez pastas. Para um programa que responde oito
+Dentro de `src/` tem dez pastas. Para um programa que responde doze
 endereços, parece muita pasta — e no começo assusta mesmo.
 
 Este texto explica por que elas existem, o que cada uma pode e não pode
@@ -15,7 +15,7 @@ estiver perdido.
 ## 1. O caminho de uma requisição
 
 Toda requisição atravessa as mesmas camadas, sempre na mesma ordem.
-Este é o `POST /sample_entity`, que cria uma entidade:
+Este é o `POST /customers`, que cadastra um cliente e abre a conta dele:
 
 ```
   requisição chega
@@ -71,12 +71,13 @@ este texto.
 | `utils/` | ferramenta de uso geral — aqui, o logger e o identificador da requisição | virar o depósito do que não se sabe onde pôr |
 
 Um exemplo do que isso significa na prática: em
-`src/controllers/sample_entity_controller.py` você lê
-`if old_status != "pending": raise SampleEntityFinalStatus(...)`. Essa
-frase é a regra do negócio, e ela mora no controller. Em
-`src/repositories/sample_entity_repository.py` não existe nenhuma frase
-dessas: o único `if` de lá decide se a busca leva um filtro a mais, e
-isso não é regra — é jeito de buscar.
+`src/controllers/account_controller.py` você lê
+`if new_status not in ALLOWED_TRANSITIONS.get(old_status, set()): raise InvalidStatusTransition(...)`.
+Essa frase é a regra do negócio, e ela mora no controller. Em
+`src/repositories/account_repository.py` não existe nenhuma frase
+dessas: ele trava as contas e as devolve, e o único `if` de lá decide se
+a linha encontrada entra no resultado. O que fazer com uma conta que não
+veio — 404? recusa? — é pergunta do controller.
 
 ### "E a conexão com o banco, em qual pasta ela mora?"
 
@@ -136,7 +137,7 @@ middleware era escrito; a história está na docstring dele.
 
 **E o `commit`?** Nunca é do middleware. Quem sabe se o trabalho terminou
 é o controller, e é por isso que `self.session.commit()` é a última linha
-antes do `return` em `src/controllers/sample_entity_controller.py`. O
+antes do `return` em `src/controllers/transfer_controller.py`. O
 middleware cuida do ciclo de vida; o controller decide o conteúdo.
 
 Abra os dois arquivos na ordem — o middleware primeiro, o `database.py`
@@ -149,11 +150,11 @@ combinado inteiro.
 
 | Quero... | Mexo em | Na ordem |
 |---|---|---|
-| **aceitar um campo novo** no JSON de entrada | `src/schemas/post_sample_entity.json` | se o campo vai para o banco, também `database/database.sql` e `src/models/` |
-| **mudar o que a resposta devolve** | `src/dtos/sample_entity_dto.py` | é o único lugar; se o campo ainda não existe no banco, antes disso `database/database.sql` e `src/models/` |
-| **criar uma rota nova** numa entidade que já existe | `src/resources/sample_entity.py` | registrar o endereço em `src/app.py`, e o método no controller se a regra for nova |
-| **mudar uma regra** ("não pode X") | `src/controllers/sample_entity_controller.py` | e um erro novo em `src/errors/custom_errors.py`, se precisar |
-| **consultar o banco de outro jeito** (filtrar, ordenar, contar) | `src/repositories/sample_entity_repository.py` | o controller chama o método novo |
+| **aceitar um campo novo** no JSON de entrada | `src/schemas/post_customer.json` (ou o schema da rota) | se o campo vai para o banco, também `database/database.sql` e `src/models/` |
+| **mudar o que a resposta devolve** | `src/dtos/customer_dto.py` (ou o DTO da entidade) | é o único lugar; se o campo ainda não existe no banco, antes disso `database/database.sql` e `src/models/` |
+| **criar uma rota nova** numa entidade que já existe | `src/resources/customer.py` (ou o resource da entidade) | registrar o endereço em `src/app.py`, e o método no controller se a regra for nova |
+| **mudar uma regra** ("não pode X") | `src/controllers/customer_controller.py` (ou o controller da entidade) | e um erro novo em `src/errors/custom_errors.py`, se precisar |
+| **consultar o banco de outro jeito** (filtrar, ordenar, contar) | `src/repositories/transfer_repository.py` (ou o repository da entidade) | o controller chama o método novo |
 | **criar uma tabela** | `database/database.sql` | depois `src/models/` e o `__init__.py` da pasta |
 | **criar uma entidade inteira** (rota + regra + tabela) | um arquivo em cada pasta | `database.sql` → `models/` → `repositories/` → `controllers/` → `schemas/` → `resources/` → registrar em `src/app.py` |
 | **fazer algo em toda requisição** | `src/middlewares/` | registrar em `src/app.py` |
@@ -168,17 +169,15 @@ mensagem nenhuma.
 `__init__.py` que lista o que ela oferece. Abra o da pasta (por exemplo
 `src/repositories/__init__.py`) e acrescente a sua linha.
 
-**E a ORDEM das linhas do `src/models/__init__.py` importa.** Abra
-`src/models/sample_entity.py` e repare no `from models import
-SampleEntityStatus`: o arquivo importa de dentro do próprio pacote em
-que ele mora. Isso só funciona porque o `__init__.py` lista o
-`SampleEntityStatus` **antes** do `SampleEntity` — quando a linha do
-`SampleEntity` roda, o status já foi carregado.
-
-Inverta as duas linhas e o Python responde:
+**E a ORDEM das linhas do `src/models/__init__.py` importa.** Hoje
+nenhum model daqui importa outro: as relações usam o nome como texto
+(`relationship("Account")`), e o SQLAlchemy resolve depois. Mas no dia
+em que um model fizer `from models import Customer` — para usar uma
+constante, por exemplo —, o `__init__.py` precisa listar o `Customer`
+**antes** desse model. Se a ordem estiver invertida, o Python responde:
 
 ```
-ImportError: cannot import name 'SampleEntityStatus' from partially
+ImportError: cannot import name 'Customer' from partially
 initialized module 'models' (most likely due to a circular import)
 ```
 
@@ -292,11 +291,11 @@ Duas pastas falam de formato, e é fácil confundi-las. A divisão é a
 direção: **o `schemas/` cuida do que ENTRA, o `dtos/` cuida do que
 SAI.**
 
-- `src/schemas/post_sample_entity.json` descreve o JSON que o cliente
+- `src/schemas/post_customer.json` descreve o JSON que o cliente
   manda. Quem lê isso é o `jsonschema`, antes da primeira linha da rota
   rodar: campo faltando, tipo errado ou campo a mais viram 400 ali
   mesmo. Quem aciona a conferência é o decorator
-  `@SchemaHandler.validate("post_sample_entity.json")` na rota, e o
+  `@SchemaHandler.validate("post_customer.json")` na rota, e o
   código dele está em `src/utils/schema_handler.py`.
 
   **Por que um `.json` e não uma classe Python?** O FastAPI validaria
@@ -305,16 +304,18 @@ SAI.**
   de entrada é um arquivo escrito em **JSON Schema**, um padrão que
   existe fora do Python e que quem integra com a API consegue ler sem
   abrir o repositório. O preço é que o corpo chega como dicionário:
-  `payload["hello"]` em vez de `payload.hello`.
-- `src/dtos/sample_entity_dto.py` faz o caminho de volta. O repository
+  `payload["cpf"]` em vez de `payload.cpf`.
+- `src/dtos/customer_dto.py` faz o caminho de volta. O repository
   entrega o objeto do banco; o DTO devolve um dicionário simples, e é
   esse dicionário que vira o JSON da resposta.
 
-Abra os dois ao lado de `src/models/sample_entity.py` e a diferença
-fica óbvia. Na **tabela**, o `hello` está escondido dentro de uma
-coluna JSON e o status é um número apontando para outra tabela. Na
-**resposta**, os dois são campos planos, com nome de gente. Quem faz
-essa travessia é o DTO, e é por isso que ele existe.
+Abra os dois ao lado de `src/models/customer.py` e `src/models/account.py`
+e a diferença fica óbvia. No **banco**, cliente e conta são duas tabelas,
+ligadas por chave estrangeira, e os ids são objetos UUID. Na **resposta**
+do `POST /customers`, `customer_id`, `account_id`, `account_number` e o
+status da conta saem num dicionário só, plano, com os ids já em texto.
+Quem faz essa travessia é o DTO (`CustomerDTO.creation_to_dict`), e é
+por isso que ele existe.
 
 Campo novo na resposta? Acrescente no `dtos/`. Nenhum outro arquivo
 precisa saber.

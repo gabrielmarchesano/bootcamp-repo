@@ -36,9 +36,8 @@ def register_session_manager_middleware(application: FastAPI) -> None:
     então commita. E seria errado.
 
     Quem sabe se o trabalho terminou é o controller, não a camada de
-    fora. Abra src/controllers/sample_entity_controller.py: em `create` e
-    em `update_status`, o `self.session.commit()` é a ÚLTIMA linha antes
-    do `return` — depois que a regra passou, nunca antes.
+    fora. Abra src/controllers/transfer_controller.py: em `create`, o
+    `self.session.commit()` é a ÚLTIMA linha antes do `return` — depois que a regra passou, nunca antes.
 
     Com o commit aqui, esse controle sumiria. Uma rota que grava e depois
     descobre que não podia teria a gravação salva assim mesmo, porque a

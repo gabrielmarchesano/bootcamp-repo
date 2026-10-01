@@ -13,7 +13,6 @@ from resources import (
     AccountResource,
     CustomerResource,
     HealthCheckResource,
-    SampleEntityResource,
     TransferResource,
     WebhookResource,
 )
@@ -130,39 +129,12 @@ def create_app() -> FastAPI:
     # se a coisa foi criada, agendada ou concluída. Esta lista diz QUEM
     # atende cada endereço, e mais nada.
     health_check_resource = HealthCheckResource()
-    sample_entity_resource = SampleEntityResource()
 
     application.add_api_route("/", health_check_resource.on_get_home, methods=["GET"])
     application.add_api_route(
         "/health_check",
         health_check_resource.on_get_health_check,
         methods=["GET"]
-    )
-
-    application.add_api_route(
-        "/sample_entity",
-        sample_entity_resource.on_post,
-        methods=["POST"],
-    )
-    application.add_api_route(
-        "/sample_entity/{sample_entity_key}",
-        sample_entity_resource.on_get_by_key,
-        methods=["GET"],
-    )
-    application.add_api_route(
-        "/sample_entity/{sample_entity_key}",
-        sample_entity_resource.on_put_by_key,
-        methods=["PUT"],
-    )
-    application.add_api_route(
-        "/webhook/sample_entity/{sample_entity_key}/increment_counter",
-        sample_entity_resource.on_put_increment_counter,
-        methods=["PUT"],
-    )
-    application.add_api_route(
-        "/sample_entities",
-        sample_entity_resource.on_get_list,
-        methods=["GET"],
     )
 
     # ────────────────────────────────────────────────────────────────

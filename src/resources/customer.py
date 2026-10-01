@@ -7,7 +7,7 @@ from utils.schema_handler import SchemaHandler
 
 
 class CustomerResource:
-    """Cadastro de cliente. Mesmo desenho do SampleEntityResource: valida, chama, devolve."""
+    """Cadastro de cliente. Um método por rota: valida (decorator), chama o controller, devolve."""
 
     @SchemaHandler.validate("post_customer.json")
     def on_post(self, payload: dict) -> JSONResponse:

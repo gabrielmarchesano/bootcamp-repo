@@ -44,8 +44,7 @@ class CustomerController(BaseController):
           4. idade
           5. elegibilidade ao microcrédito
 
-        Diferente do sample_entity, recusa de KYC e de idade NÃO devolvem
-        erro: o cadastro é criado com a conta em REJECTED e responde 201.
+        Recusa de KYC e de idade NÃO devolvem erro: o cadastro é criado com a conta em REJECTED e responde 201.
         O banco precisa guardar a tentativa — é trilha de auditoria de
         PLD, e a IF precisa conseguir consultar por que recusou.
         """
