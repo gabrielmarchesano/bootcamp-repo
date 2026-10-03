@@ -1,10 +1,11 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import func, text
 
 from database import Context
-from models import Account, Customer
+from models import Account, AccountStatus, AccountStatusEvent, Customer
+from repositories.enumerator_repository import EnumeratorRepository
 
 
 class AccountRepository:
@@ -26,25 +27,43 @@ class AccountRepository:
     Contas INTERNAL nunca são travadas: entram em quase todo lançamento e
     virariam uma fila única para o banco inteiro. O saldo delas é a soma
     do ledger (view vw_internal_account_balance).
+
+    ────────────────────────────────────────────────────────────────
+    E O HISTÓRICO DE STATUS TAMBÉM
+    ────────────────────────────────────────────────────────────────
+    Status da conta só muda por `create_for_customer` (nascimento) e
+    `update_status` (transição). Os dois gravam o evento na mesma
+    chamada, então não existe mudança de status sem linha em
+    account_status_event. QUAIS transições são permitidas não é assunto
+    daqui: isso é regra, e mora no AccountController.
     """
 
     def __init__(self, context: Context) -> None:
         self.session = context.db_session
+        self.enumerators = EnumeratorRepository(context)
 
     def create_for_customer(self, customer: Customer, status: str, status_reason: str) -> Account:
-        next_number = self.session.execute(text("SELECT nextval('account_number_seq')")).scalar_one()
+        # Sem autoflush: a sequência não depende de nada pendente, e um flush
+        # aqui mandaria o INSERT do cliente para o banco FORA do `try` do
+        # controller que traduz CPF duplicado em 409 (vira 500 na corrida).
+        with self.session.no_autoflush:
+            next_number = self.session.execute(text("SELECT nextval('account_number_seq')")).scalar_one()
 
         account = Account()
         account.type = Account.CUSTOMER
         account.customer = customer
         account.branch = Account.DEFAULT_BRANCH
         account.number = str(next_number).zfill(8)
-        account.status = status
+        account.status = self.enumerators.get(AccountStatus, status)
         account.status_reason = status_reason
         account.balance = 0
         account.held_balance = 0
 
         self.session.add(account)
+
+        # Nascimento: null → status inicial (o "nulo ao nascer" do from_status_id).
+        self._record_status_event(account, None, account.status, status_reason)
+
         return account
 
     def get_customer_account(self, account_id: UUID) -> Account:
@@ -100,14 +119,47 @@ class AccountRepository:
         return locked
 
     def update_status(self, account: Account, new_status: str, reason: str) -> None:
-        account.status = new_status
+        """Muda o status E grava o evento — as duas coisas, sempre juntas.
+
+        Quem chama já conferiu a transição (controller) e já travou a
+        conta (lock_customer_accounts).
+        """
+        old_status = account.status
+
+        account.status = self.enumerators.get(AccountStatus, new_status)
         account.status_reason = reason
         account.updated_at = func.now()
+
+        self._record_status_event(account, old_status, account.status, reason)
 
     def has_active_loan(self, account_id: UUID) -> bool:
         # SQL direto: o model de Loan nasce no sprint de microcrédito.
         row = self.session.execute(
-            text("SELECT 1 FROM loan WHERE account_id = :account_id AND status = 'ACTIVE' LIMIT 1"),
+            text(
+                "SELECT 1 FROM loan l JOIN loan_status s ON s.id = l.status_id "
+                "WHERE l.account_id = :account_id AND s.enumerator = 'ACTIVE' LIMIT 1"
+            ),
             {"account_id": account_id},
         ).first()
         return row is not None
+
+    def _record_status_event(
+        self,
+        account: Account,
+        from_status: Optional[AccountStatus],
+        to_status: AccountStatus,
+        reason: Optional[str],
+    ) -> None:
+        """Pendura o evento NA RELAÇÃO com a conta (e não por account_id solto).
+
+        É a relação que diz ao SQLAlchemy "grave a conta antes do evento".
+        Com só o account_id preenchido, ele pode gravar o evento primeiro e
+        o banco recusaria pela chave estrangeira.
+        """
+        event = AccountStatusEvent()
+        event.account = account
+        event.from_status = from_status
+        event.to_status = to_status
+        event.reason = reason
+
+        self.session.add(event)

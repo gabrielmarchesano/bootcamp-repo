@@ -1,10 +1,12 @@
 from database import Context
-from models import IncomingTransfer
+from models import IncomingTransfer, IncomingTransferStatus
+from repositories.enumerator_repository import EnumeratorRepository
 
 
 class IncomingTransferRepository:
     def __init__(self, context: Context) -> None:
         self.session = context.db_session
+        self.enumerators = EnumeratorRepository(context)
 
     def get_by_external_id(self, rail: str, external_id: str) -> IncomingTransfer:
         return (
@@ -24,7 +26,7 @@ class IncomingTransferRepository:
         incoming.sender_name = sender.get("name")
         incoming.sender_document = sender.get("document")
         incoming.sender_ispb = sender.get("ispb")
-        incoming.status = status
+        incoming.status = self.enumerators.get(IncomingTransferStatus, status)
 
         self.session.add(incoming)
         self.session.flush()

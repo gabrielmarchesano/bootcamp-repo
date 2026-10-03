@@ -1,19 +1,29 @@
 from controllers.base_controller import BaseController
 from dtos import AccountDTO
 from errors import AccountCannotBeClosed, AccountNotFound, InvalidParameter, InvalidStatusTransition
-from models import Account, OutboxEvent
+from models import Account, AccountStatus, OutboxEvent
 from repositories import AccountRepository, LedgerRepository, OutboxRepository
 from utils.cursor import decode_cursor, encode_cursor
 from utils.db_retry import retry_on_deadlock
 from utils.ids import parse_uuid
 
-# Máquina de estados da conta (fluxo v6). O que não está aqui é proibido.
-# REQUESTED e REJECTED e CLOSED não têm saída: REJECTED fica como registro
-# de auditoria e CLOSED é definitivo.
+# ────────────────────────────────────────────────────────────────────
+# QUEM PODE VIRAR O QUÊ
+# ────────────────────────────────────────────────────────────────────
+# QUAIS estados existem é a tabela account_status (o banco recusa o resto).
+# QUAIS transições são permitidas é este dicionário — regra de negócio,
+# então mora no controller. O que não está aqui é proibido (409).
+#
+# Estados sem entrada no dicionário não têm saída:
+#   • REJECTED fica como registro de auditoria (trilha de PLD);
+#   • CLOSED é final, e conta encerrada não recebe transação;
+#   • REQUESTED existe na lista, mas hoje nenhuma conta nasce nele.
+# BLOCKED → ACTIVE é decisão do time: bloqueio é reversível (ex.: fraude
+# descartada).
 ALLOWED_TRANSITIONS = {
-    Account.PENDING: {Account.ACTIVE, Account.REJECTED},
-    Account.ACTIVE: {Account.BLOCKED, Account.CLOSED},
-    Account.BLOCKED: {Account.ACTIVE, Account.CLOSED},
+    AccountStatus.PENDING: {AccountStatus.ACTIVE, AccountStatus.REJECTED},
+    AccountStatus.ACTIVE: {AccountStatus.BLOCKED, AccountStatus.CLOSED},
+    AccountStatus.BLOCKED: {AccountStatus.ACTIVE, AccountStatus.CLOSED},
 }
 
 
@@ -35,6 +45,9 @@ class AccountController(BaseController):
         A conta é travada ANTES da checagem. Sem o lock, um PIX poderia
         cair entre o "saldo é zero" e o "encerrada", e a conta fecharia
         com dinheiro dentro.
+
+        Transição recusada não grava evento: o histórico conta o que
+        aconteceu, não o que foi tentado.
         """
         account_id = parse_uuid(raw_account_id)
         locked = {}
@@ -45,11 +58,11 @@ class AccountController(BaseController):
         if account is None:
             raise AccountNotFound(raw_account_id)
 
-        old_status = account.status
+        old_status = account.status.enumerator
         if new_status not in ALLOWED_TRANSITIONS.get(old_status, set()):
             raise InvalidStatusTransition(old_status, new_status)
 
-        if new_status == Account.CLOSED:
+        if new_status == AccountStatus.CLOSED:
             self._check_can_close(account)
 
         self.account_repository.update_status(account, new_status, reason)

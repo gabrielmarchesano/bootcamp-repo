@@ -1,7 +1,9 @@
-from sqlalchemy import BigInteger, Column, DateTime, Identity, Integer, String, func
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Identity, Integer, SmallInteger, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.outbox_event_status import OutboxEventStatus
 
 
 class OutboxEvent(Base):
@@ -25,7 +27,9 @@ class OutboxEvent(Base):
     aggregate_type = Column(String, nullable=False)
     aggregate_id = Column(UUID(as_uuid=True), nullable=False)
     payload = Column(JSONB, nullable=False)
-    status = Column(String, nullable=False, server_default="PENDING")
+    status_id = Column(SmallInteger, ForeignKey(OutboxEventStatus.id), nullable=False)
     attempts = Column(Integer, nullable=False, server_default="0")
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     sent_at = Column(DateTime(timezone=True))
+
+    status = relationship("OutboxEventStatus", foreign_keys=[status_id], lazy="selectin")

@@ -37,6 +37,84 @@ CREATE TABLE fee (
     PRIMARY KEY (method, customer_type, effective_from)
 );
 
+
+-- Uma tabela por entidade. Estado que não está aqui o banco recusa, sem
+-- precisar de código. O código lê pelo `enumerator`, nunca pelo id; o id
+-- só aparece neste arquivo, nos CHECKs e índices parciais.
+CREATE TABLE kyc_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO kyc_status (id, enumerator) VALUES
+    (1, 'PENDING'), (2, 'APPROVED'), (3, 'REJECTED');
+ 
+CREATE TABLE account_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO account_status (id, enumerator) VALUES
+    (1, 'REQUESTED'), (2, 'PENDING'), (3, 'ACTIVE'),
+    (4, 'BLOCKED'),   (5, 'REJECTED'), (6, 'CLOSED');
+ 
+CREATE TABLE loan_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO loan_status (id, enumerator) VALUES
+    (1, 'ACTIVE'), (2, 'PAID_OFF');
+ 
+CREATE TABLE installment_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO installment_status (id, enumerator) VALUES
+    (1, 'OPEN'), (2, 'PARTIAL'), (3, 'OVERDUE'), (4, 'PAID');
+ 
+CREATE TABLE transfer_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO transfer_status (id, enumerator) VALUES
+    (1, 'CREATED'),  (2, 'SCHEDULED'), (3, 'SENT'), (4, 'COMPLETED'),
+    (5, 'REJECTED'), (6, 'RETURNED'),  (7, 'FAILED');
+ 
+CREATE TABLE incoming_transfer_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO incoming_transfer_status (id, enumerator) VALUES
+    (1, 'CREDITED'), (2, 'RETURNED');
+ 
+CREATE TABLE card_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO card_status (id, enumerator) VALUES
+    (1, 'ACTIVE'), (2, 'BLOCKED'), (3, 'CANCELED');
+ 
+CREATE TABLE card_authorization_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO card_authorization_status (id, enumerator) VALUES
+    (1, 'APPROVED'), (2, 'DECLINED'), (3, 'CAPTURED'),
+    (4, 'EXPIRED'),  (5, 'REVERSED'), (6, 'REFUNDED');
+ 
+CREATE TABLE invoice_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO invoice_status (id, enumerator) VALUES
+    (1, 'OPEN'), (2, 'CLOSED'), (3, 'PARTIALLY_PAID'), (4, 'PAID'), (5, 'OVERDUE');
+ 
+CREATE TABLE outbox_event_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO outbox_event_status (id, enumerator) VALUES
+    (1, 'PENDING'), (2, 'SENT'), (3, 'FAILED');
+ 
+
 -- ---------------------------------------------------------------------
 -- 1. Cliente e conta
 -- ---------------------------------------------------------------------
@@ -50,8 +128,7 @@ CREATE TABLE customer (
     annual_revenue         BIGINT    NOT NULL CHECK (annual_revenue >= 0),
     revenue_reference_date DATE      NOT NULL DEFAULT CURRENT_DATE,
     microcredit_eligible   BOOLEAN   NOT NULL,
-    kyc_status             TEXT      NOT NULL DEFAULT 'PENDING'
-                           CHECK (kyc_status IN ('PENDING','APPROVED','REJECTED')),
+    kyc_status_id          SMALLINT  NOT NULL REFERENCES kyc_status(id),
     is_pep                 BOOLEAN   NOT NULL DEFAULT FALSE,
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -71,10 +148,8 @@ CREATE TABLE account (
     internal_code    TEXT UNIQUE,  -- só para contas INTERNAL
     branch           CHAR(4),
     number           TEXT UNIQUE,
-    status           TEXT NOT NULL DEFAULT 'REQUESTED'
-                     CHECK (status IN ('REQUESTED','ACTIVE','PENDING','REJECTED',
-                                       'BLOCKED','CLOSED')),
-    status_reason    TEXT,
+    status_id        SMALLINT NOT NULL REFERENCES account_status(id),
+    status_reason    TEXT,     -- motivo do status ATUAL; o histórico está em account_status_event
     -- saldo contábil materializado: só contas CUSTOMER (atualizado sob FOR UPDATE).
     -- Contas INTERNAL não são travadas (evita hotspot); saldo = SUM do ledger.
     balance          BIGINT,
@@ -90,6 +165,17 @@ CREATE TABLE account (
     -- Sem CHECK balance >= 0: captura mandatória de débito pode negativar (regra da IF).
 );
 
+CREATE TABLE account_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    account_id      UUID     NOT NULL REFERENCES account(id),
+    from_status_id  SMALLINT REFERENCES account_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES account_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_account_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_account_status_event ON account_status_event (account_id, id);
+ 
 -- ---------------------------------------------------------------------
 -- 2. Ledger (partidas dobradas, imutável)
 -- ---------------------------------------------------------------------
@@ -170,16 +256,26 @@ CREATE TABLE loan (
     purpose                     TEXT NOT NULL,
     sfn_debt_declaration        BOOLEAN NOT NULL CHECK (sfn_debt_declaration),  -- teto R$ 80k no SFN
     outstanding_principal       BIGINT NOT NULL CHECK (outstanding_principal >= 0),
-    status                      TEXT NOT NULL DEFAULT 'ACTIVE'
-                                CHECK (status IN ('ACTIVE','PAID_OFF')),
+    status_id                   SMALLINT NOT NULL REFERENCES loan_status(id),
     contracted_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     paid_off_at                 TIMESTAMPTZ,
     FOREIGN KEY (credit_line_id, credit_line_version)
         REFERENCES credit_line_version (credit_line_id, version),
     CONSTRAINT ck_net_amount CHECK (net_amount = principal_amount - origination_fee_amount),
-    CONSTRAINT ck_paid_off CHECK ((status = 'PAID_OFF') = (paid_off_at IS NOT NULL))
+    CONSTRAINT ck_paid_off CHECK ((status_id = 2) = (paid_off_at IS NOT NULL))  -- 2 = PAID_OFF
 );
-CREATE INDEX ix_loan_account_active ON loan (account_id) WHERE status = 'ACTIVE';
+CREATE INDEX ix_loan_account_active ON loan (account_id) WHERE status_id = 1;  -- 1 = ACTIVE
+
+CREATE TABLE loan_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    loan_id         UUID     NOT NULL REFERENCES loan(id),
+    from_status_id  SMALLINT REFERENCES loan_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES loan_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_loan_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_loan_status_event ON loan_status_event (loan_id, id);
 
 CREATE TABLE installment (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -195,11 +291,23 @@ CREATE TABLE installment (
     days_overdue        INT NOT NULL DEFAULT 0 CHECK (days_overdue >= 0),
     paid_at             TIMESTAMPTZ,
     UNIQUE (loan_id, number),
-    CONSTRAINT ck_paid CHECK ((status = 'PAID') = (paid_at IS NOT NULL))
+    CONSTRAINT ck_paid CHECK ((status_id = 4) = (paid_at IS NOT NULL))  -- 4 = PAID
 );
 -- Filtro do job de cobrança (v6: OPEN, PARTIAL e OVERDUE)
 CREATE INDEX ix_installment_collection ON installment (due_date)
-    WHERE status IN ('OPEN','PARTIAL','OVERDUE');
+    WHERE status_id IN (1, 2, 3);  -- OPEN, PARTIAL, OVERDUE
+
+CREATE TABLE installment_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    installment_id  UUID     NOT NULL REFERENCES installment(id),
+    from_status_id  SMALLINT REFERENCES installment_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES installment_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_installment_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_installment_status_event ON installment_status_event (installment_id, id);
+
 
 CREATE TABLE loan_payment (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -236,9 +344,7 @@ CREATE TABLE transfer (
     method                  TEXT NOT NULL CHECK (method IN ('TEF','PIX','TED')),
     amount                  BIGINT NOT NULL CHECK (amount > 0),
     fee                     BIGINT NOT NULL DEFAULT 0 CHECK (fee >= 0),
-    status                  TEXT NOT NULL DEFAULT 'CREATED'
-                            CHECK (status IN ('CREATED','SCHEDULED','SENT','COMPLETED',
-                                              'REJECTED','RETURNED','FAILED')),
+    status_id               SMALLINT NOT NULL REFERENCES transfer_status(id),
     on_us                   BOOLEAN NOT NULL DEFAULT FALSE,
     -- destino interno (TEF e PIX on-us)
     destination_account_id  UUID REFERENCES account(id),
@@ -264,13 +370,27 @@ CREATE TABLE transfer (
      OR (method = 'TED' AND destination_ispb IS NOT NULL AND destination_branch IS NOT NULL
                         AND destination_account IS NOT NULL AND destination_document IS NOT NULL
                         AND NOT on_us)),
-    CONSTRAINT ck_scheduled CHECK ((status = 'SCHEDULED') <= (scheduled_for IS NOT NULL))
+    CONSTRAINT ck_scheduled CHECK ((status_id = 2) <= (scheduled_for IS NOT NULL))  -- 2 = SCHEDULED
 );
 -- Limite noturno: soma das saídas da conta na janela 20h–6h
 CREATE INDEX ix_transfer_source_date ON transfer (source_account_id, created_at);
 -- Jobs: TED agendada e reconciliação SPI/STR
-CREATE INDEX ix_transfer_scheduled ON transfer (scheduled_for) WHERE status = 'SCHEDULED';
-CREATE INDEX ix_transfer_sent      ON transfer (updated_at)    WHERE status = 'SENT';
+CREATE INDEX ix_transfer_scheduled ON transfer (scheduled_for) WHERE status_id = 2;  -- SCHEDULED
+CREATE INDEX ix_transfer_sent      ON transfer (updated_at)    WHERE status_id = 3;  -- SENT
+ 
+-- Histórico de status: uma linha por transição, append-only (trigger na seção 7).
+-- A coluna transfer.status_id é a verdade do agora; esta tabela é a verdade do que aconteceu.
+CREATE TABLE transfer_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    transfer_id     UUID     NOT NULL REFERENCES transfer(id),
+    from_status_id  SMALLINT REFERENCES transfer_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES transfer_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_transfer_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_transfer_status_event ON transfer_status_event (transfer_id, id);
+ 
 
 -- Entradas via webhook SPI/STR (idempotência por id externo)
 CREATE TABLE incoming_transfer (
@@ -282,11 +402,11 @@ CREATE TABLE incoming_transfer (
     sender_name             TEXT,
     sender_document         TEXT,
     sender_ispb             CHAR(8),
-    status                  TEXT NOT NULL CHECK (status IN ('CREDITED','RETURNED')),
+    status_id               SMALLINT NOT NULL REFERENCES incoming_transfer_status(id),  -- nasce final: sem eventos
     received_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (rail, external_id)
 );
-
+ 
 -- ---------------------------------------------------------------------
 -- 5. Cartões (débito e crédito)
 -- ---------------------------------------------------------------------
@@ -297,8 +417,7 @@ CREATE TABLE card (
     last4               CHAR(4) NOT NULL,
     brand               TEXT NOT NULL,
     functions           TEXT NOT NULL CHECK (functions IN ('DEBIT','CREDIT','MULTIPLE')),
-    status              TEXT NOT NULL DEFAULT 'ACTIVE'
-                        CHECK (status IN ('ACTIVE','BLOCKED','CANCELED')),
+    status_id           SMALLINT NOT NULL REFERENCES card_status(id),
     -- crédito (NULL se só débito)
     total_limit         BIGINT CHECK (total_limit >= 0),
     available_limit     BIGINT CHECK (available_limit >= 0),
@@ -312,6 +431,18 @@ CREATE TABLE card (
          AND closing_day IS NOT NULL AND due_day IS NOT NULL))
 );
 
+CREATE TABLE card_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    card_id         UUID     NOT NULL REFERENCES card(id),
+    from_status_id  SMALLINT REFERENCES card_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES card_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_card_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_card_status_event ON card_status_event (card_id, id);
+ 
+
 -- Autorização = HOLD (débito) ou reserva de limite (crédito)
 CREATE TABLE card_authorization (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -323,8 +454,7 @@ CREATE TABLE card_authorization (
     installment_count    SMALLINT NOT NULL DEFAULT 1 CHECK (installment_count >= 1),
     merchant_name        TEXT,
     mcc                  CHAR(4),
-    status               TEXT NOT NULL CHECK (status IN (
-                            'APPROVED','DECLINED','CAPTURED','EXPIRED','REVERSED','REFUNDED')),
+    status_id            SMALLINT NOT NULL REFERENCES card_authorization_status(id),
     response_code        CHAR(2) NOT NULL,         -- '00' aprovada · '51' saldo/limite
     approval_code        CHAR(6),
     expires_at           TIMESTAMPTZ,
@@ -333,7 +463,8 @@ CREATE TABLE card_authorization (
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 -- Job de expiração de HOLD/reserva
-CREATE INDEX ix_card_auth_expiry ON card_authorization (expires_at) WHERE status = 'APPROVED';
+CREATE INDEX ix_card_auth_expiry ON card_authorization (expires_at) WHERE status_id = 1;  -- APPROVED
+ 
 
 CREATE TABLE card_capture (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -356,8 +487,7 @@ CREATE TABLE invoice (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     card_id                 UUID NOT NULL REFERENCES card(id),
     reference_month         DATE NOT NULL,              -- 1º dia do mês
-    status                  TEXT NOT NULL DEFAULT 'OPEN'
-                            CHECK (status IN ('OPEN','CLOSED','PAID','PARTIALLY_PAID','OVERDUE')),
+    status_id               SMALLINT NOT NULL REFERENCES invoice_status(id),
     closing_date            DATE NOT NULL,
     due_date                DATE NOT NULL,              -- ajustada a dia útil
     total_amount            BIGINT NOT NULL DEFAULT 0,
@@ -366,9 +496,22 @@ CREATE TABLE invoice (
     UNIQUE (card_id, reference_month),
     CONSTRAINT ck_dates CHECK (due_date > closing_date)
 );
-CREATE UNIQUE INDEX ux_invoice_open ON invoice (card_id) WHERE status = 'OPEN';
-CREATE INDEX ix_invoice_closing ON invoice (closing_date) WHERE status = 'OPEN';
-CREATE INDEX ix_invoice_due     ON invoice (due_date)     WHERE status IN ('CLOSED','PARTIALLY_PAID');
+CREATE UNIQUE INDEX ux_invoice_open ON invoice (card_id) WHERE status_id = 1;          -- OPEN
+CREATE INDEX ix_invoice_closing ON invoice (closing_date) WHERE status_id = 1;           -- OPEN
+CREATE INDEX ix_invoice_due     ON invoice (due_date)     WHERE status_id IN (2, 3);     -- CLOSED, PARTIALLY_PAID
+
+
+CREATE TABLE invoice_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invoice_id      UUID     NOT NULL REFERENCES invoice(id),
+    from_status_id  SMALLINT REFERENCES invoice_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES invoice_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_invoice_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_invoice_status_event ON invoice_status_event (invoice_id, id);
+ 
 
 CREATE TABLE invoice_item (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -405,14 +548,13 @@ CREATE TABLE outbox_event (
     aggregate_type  TEXT NOT NULL,
     aggregate_id    UUID NOT NULL,
     payload         JSONB NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'PENDING'
-                    CHECK (status IN ('PENDING','SENT','FAILED')),
+    status_id       SMALLINT NOT NULL REFERENCES outbox_event_status(id),  -- técnico: sem eventos
     attempts        INT NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     sent_at         TIMESTAMPTZ
 );
-CREATE INDEX ix_outbox_pending ON outbox_event (id) WHERE status = 'PENDING';
-
+CREATE INDEX ix_outbox_pending ON outbox_event (id) WHERE status_id = 1;  -- PENDING
+ 
 -- ---------------------------------------------------------------------
 -- 7. Integridade do ledger
 -- ---------------------------------------------------------------------
@@ -423,11 +565,11 @@ BEGIN
         MESSAGE = 'ledger_entry is immutable (post a reversal entry instead)',
         ERRCODE = 'restrict_violation';
 END $$;
-
+ 
 CREATE TRIGGER tg_immutable_ledger
     BEFORE UPDATE OR DELETE ON ledger_entry
     FOR EACH ROW EXECUTE FUNCTION fn_immutable_ledger();
-
+ 
 -- 7b. Partidas dobradas: no COMMIT, cada operation_id soma zero.
 CREATE FUNCTION fn_double_entry() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE s BIGINT;
@@ -440,12 +582,41 @@ BEGIN
     END IF;
     RETURN NULL;
 END $$;
-
+ 
 CREATE CONSTRAINT TRIGGER tg_double_entry
     AFTER INSERT ON ledger_entry
     DEFERRABLE INITIALLY DEFERRED
     FOR EACH ROW EXECUTE FUNCTION fn_double_entry();
-
+ 
+-- 7c. Enumeradores e históricos de status: só INSERT.
+--     • Enumerador: o id está citado em CHECKs e índices parciais; editar
+--       ou apagar uma linha mudaria o significado deles em silêncio.
+--       Estado novo entra por INSERT, com id novo.
+--     • Evento: histórico que pode ser editado não é histórico.
+CREATE FUNCTION fn_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION USING
+        MESSAGE = TG_TABLE_NAME || ' is append-only (UPDATE and DELETE are refused)',
+        ERRCODE = 'restrict_violation';
+END $$;
+ 
+DO $$
+DECLARE t TEXT;
+BEGIN
+    FOREACH t IN ARRAY ARRAY[
+        'kyc_status', 'account_status', 'loan_status', 'installment_status',
+        'transfer_status', 'incoming_transfer_status', 'card_status',
+        'card_authorization_status', 'invoice_status', 'outbox_event_status',
+        'account_status_event', 'loan_status_event', 'installment_status_event',
+        'transfer_status_event', 'card_status_event',
+        'card_authorization_status_event', 'invoice_status_event']
+    LOOP
+        EXECUTE 'CREATE TRIGGER ' || quote_ident('tg_' || t || '_append_only')
+             || ' BEFORE UPDATE OR DELETE ON ' || quote_ident(t)
+             || ' FOR EACH ROW EXECUTE FUNCTION fn_append_only()';
+    END LOOP;
+END $$;
+ 
 -- ---------------------------------------------------------------------
 -- 8. Views de apoio
 -- ---------------------------------------------------------------------
@@ -455,25 +626,35 @@ SELECT a.internal_code, COALESCE(SUM(l.amount), 0) AS balance
 FROM account a LEFT JOIN ledger_entry l ON l.account_id = a.id
 WHERE a.type = 'INTERNAL'
 GROUP BY a.internal_code;
-
+ 
 -- Saldo de microcrédito por conta (teto R$ 21 mil por instituição)
 CREATE VIEW vw_microcredit_balance AS
-SELECT account_id, SUM(outstanding_principal) AS microcredit_balance
-FROM loan WHERE status = 'ACTIVE'
-GROUP BY account_id;
-
+SELECT l.account_id, SUM(l.outstanding_principal) AS microcredit_balance
+FROM loan l JOIN loan_status s ON s.id = l.status_id
+WHERE s.enumerator = 'ACTIVE'
+GROUP BY l.account_id;
+ 
 -- ---------------------------------------------------------------------
 -- 9. Seeds
 -- ---------------------------------------------------------------------
-INSERT INTO account (type, internal_code, status) VALUES
-    ('INTERNAL', 'LOAN_PORTFOLIO',          'ACTIVE'),  -- carteira de crédito
-    ('INTERNAL', 'ORIGINATION_FEE_REVENUE', 'ACTIVE'),  -- receita de TAC
-    ('INTERNAL', 'INTEREST_REVENUE',        'ACTIVE'),  -- contrapartida dos juros
-    ('INTERNAL', 'FEE_REVENUE',             'ACTIVE'),  -- receita de tarifas
-    ('INTERNAL', 'SPI_SETTLEMENT',          'ACTIVE'),  -- transitória SPI
-    ('INTERNAL', 'STR_SETTLEMENT',          'ACTIVE'),  -- transitória STR
-    ('INTERNAL', 'CARD_SETTLEMENT',         'ACTIVE');  -- liquidação de cartão
-
+INSERT INTO account (type, internal_code, status_id)
+SELECT 'INTERNAL', v.code, s.id
+FROM (VALUES
+    ('LOAN_PORTFOLIO'),           -- carteira de crédito
+    ('ORIGINATION_FEE_REVENUE'),  -- receita de TAC
+    ('INTEREST_REVENUE'),         -- contrapartida dos juros
+    ('FEE_REVENUE'),              -- receita de tarifas
+    ('SPI_SETTLEMENT'),           -- transitória SPI
+    ('STR_SETTLEMENT'),           -- transitória STR
+    ('CARD_SETTLEMENT')           -- liquidação de cartão
+) AS v(code)
+CROSS JOIN account_status s
+WHERE s.enumerator = 'ACTIVE';
+ 
+-- Toda conta nasce com um evento (null → status inicial), inclusive as internas.
+INSERT INTO account_status_event (account_id, from_status_id, to_status_id, reason)
+SELECT id, NULL, status_id, 'SEED' FROM account WHERE type = 'INTERNAL';
+ 
 -- Tarifas — PREMISSAS DO TIME, ajustar antes da banca:
 --   • TEF R$ 1,00: o bootcamp exige tarifa na transferência; sem ela o
 --     requisito não aparece na demo.
@@ -483,3 +664,4 @@ INSERT INTO fee (method, customer_type, amount) VALUES
     ('TEF', 'INDIVIDUAL', 100), ('TEF', 'MEI', 100),
     ('PIX', 'INDIVIDUAL', 0),   ('PIX', 'MEI', 0),
     ('TED', 'INDIVIDUAL', 1000), ('TED', 'MEI', 1000);
+ 

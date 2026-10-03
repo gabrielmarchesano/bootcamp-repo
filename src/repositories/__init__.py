@@ -1,3 +1,4 @@
+from repositories.enumerator_repository import EnumeratorRepository
 from repositories.customer_repository import CustomerRepository
 from repositories.account_repository import AccountRepository
 from repositories.ledger_repository import LedgerLeg, LedgerRepository

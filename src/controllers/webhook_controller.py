@@ -2,14 +2,15 @@ from sqlalchemy.exc import IntegrityError
 
 from controllers.base_controller import BaseController
 from dtos import TransferDTO
-from models import Account, IncomingTransfer, LedgerEntry, OutboxEvent, Transfer
+from models import Account, AccountStatus, IncomingTransfer, IncomingTransferStatus, LedgerEntry, OutboxEvent, Transfer
 from repositories import AccountRepository, IncomingTransferRepository, LedgerLeg, LedgerRepository, OutboxRepository
 from utils.db_retry import retry_on_deadlock
 
 # Status em que a conta ainda RECEBE dinheiro. BLOCKED recebe: bloqueio é
 # sobre o cliente movimentar, não sobre terceiros pagarem a ele (ex.: o
-# cliente sob análise de fraude continua recebendo o salário).
-CAN_RECEIVE = (Account.ACTIVE, Account.BLOCKED)
+# cliente sob análise de fraude continua recebendo o salário). CLOSED,
+# estado final, não recebe: a entrada vira devolução.
+CAN_RECEIVE = (AccountStatus.ACTIVE, AccountStatus.BLOCKED)
 
 
 class WebhookController(BaseController):
@@ -55,11 +56,11 @@ class WebhookController(BaseController):
         if existing is not None:
             return TransferDTO.incoming_to_dict(existing)
 
-        if account is None or account.status not in CAN_RECEIVE:
-            status = IncomingTransfer.RETURNED
+        if account is None or account.status.enumerator not in CAN_RECEIVE:
+            status = IncomingTransferStatus.RETURNED
             account_id = account.id if account is not None else None
         else:
-            status = IncomingTransfer.CREDITED
+            status = IncomingTransferStatus.CREDITED
             account_id = account.id
 
         try:
@@ -69,7 +70,7 @@ class WebhookController(BaseController):
             existing = self.incoming_repository.get_by_external_id(IncomingTransfer.SPI, external_id)
             return TransferDTO.incoming_to_dict(existing)
 
-        if status == IncomingTransfer.CREDITED:
+        if status == IncomingTransferStatus.CREDITED:
             spi_settlement = self.account_repository.get_internal(Account.SPI_SETTLEMENT)
             amount = payload["amount"]
 

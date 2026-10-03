@@ -11,7 +11,7 @@ from errors import (
     InvalidCnpj,
     InvalidDocumentNumber,
 )
-from models import Account, Customer, OutboxEvent
+from models import AccountStatus, Customer, KycStatus, OutboxEvent
 from repositories import AccountRepository, CustomerRepository, OutboxRepository
 from utils.document_number import is_valid_cnpj, is_valid_cpf
 from utils.ids import parse_uuid
@@ -25,6 +25,11 @@ REVIEW_AGE = 80
 # Teto de faturamento para o microcrédito: R$ 360.000,00 por ano, em centavos.
 # É o mesmo valor do CHECK ck_eligibility do banco — se um mudar, o outro muda.
 MICROCREDIT_REVENUE_CAP = 36_000_000
+
+# Os UNIQUE do banco que significam "este documento já é cliente".
+# Qualquer OUTRA violação de integridade é bug nosso e precisa aparecer
+# como bug (500 + erro real no log), não disfarçada de cliente duplicado.
+UNIQUE_DOCUMENT_CONSTRAINTS = {"customer_cpf_key": "cpf", "customer_cnpj_key": "cnpj"}
 
 
 class CustomerController(BaseController):
@@ -44,9 +49,11 @@ class CustomerController(BaseController):
           4. idade
           5. elegibilidade ao microcrédito
 
-        Recusa de KYC e de idade NÃO devolvem erro: o cadastro é criado com a conta em REJECTED e responde 201.
-        O banco precisa guardar a tentativa — é trilha de auditoria de
-        PLD, e a IF precisa conseguir consultar por que recusou.
+        Recusa de KYC e de idade NÃO devolvem erro: o cadastro é criado com
+        a conta em REJECTED e responde 201. O banco precisa guardar a
+        tentativa — é trilha de auditoria de PLD, e a IF precisa conseguir
+        consultar por que recusou. O nascimento da conta já entra no
+        histórico (account_status_event), com o motivo.
         """
         self.logger.debug("Cadastrando cliente")
 
@@ -81,11 +88,14 @@ class CustomerController(BaseController):
         except IntegrityError as error:
             # Corrida: outro POST com o mesmo documento passou pelas
             # checagens ao mesmo tempo que este. O UNIQUE do banco é a
-            # última palavra.
+            # última palavra — mas SÓ o UNIQUE de documento vira 409.
             self.session.rollback()
-            if cnpj is not None and "cnpj" in str(error.orig):
+            field_name = self._violated_document(error)
+            if field_name == "cnpj":
                 raise CustomerAlreadyExists("cnpj", cnpj)
-            raise CustomerAlreadyExists("cpf", cpf)
+            if field_name == "cpf":
+                raise CustomerAlreadyExists("cpf", cpf)
+            raise
 
         self.outbox_repository.add(
             OutboxEvent.ACCOUNT_OPENED,
@@ -135,19 +145,24 @@ class CustomerController(BaseController):
         Recusa vem antes de revisão: um menor de idade que também é PEP
         é REJECTED, não PENDING — não existe revisão que o torne elegível.
         """
-        if kyc_status == Customer.KYC_REJECTED:
-            return Account.REJECTED, "KYC_REJECTED"
+        if kyc_status == KycStatus.REJECTED:
+            return AccountStatus.REJECTED, "KYC_REJECTED"
 
         if age < MINIMUM_AGE:
-            return Account.REJECTED, "UNDERAGE"
+            return AccountStatus.REJECTED, "UNDERAGE"
 
         if is_pep:
-            return Account.PENDING, "PEP_REVIEW"
+            return AccountStatus.PENDING, "PEP_REVIEW"
 
         if age >= REVIEW_AGE:
-            return Account.PENDING, "SENIOR_REVIEW"
+            return AccountStatus.PENDING, "SENIOR_REVIEW"
 
-        return Account.ACTIVE, None
+        return AccountStatus.ACTIVE, None
+
+    def _violated_document(self, error: IntegrityError):
+        diag = getattr(error.orig, "diag", None)
+        constraint_name = getattr(diag, "constraint_name", None)
+        return UNIQUE_DOCUMENT_CONSTRAINTS.get(constraint_name)
 
     def _parse_birth_date(self, raw_birth_date: str) -> date:
         try:

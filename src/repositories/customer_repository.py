@@ -4,12 +4,14 @@ from uuid import UUID
 from sqlalchemy import func
 
 from database import Context
-from models import Customer
+from models import Customer, KycStatus
+from repositories.enumerator_repository import EnumeratorRepository
 
 
 class CustomerRepository:
     def __init__(self, context: Context) -> None:
         self.session = context.db_session
+        self.enumerators = EnumeratorRepository(context)
 
     def create(self, customer_data: dict, birth_date: date, kyc_status: str, microcredit_eligible: bool) -> Customer:
         customer = Customer()
@@ -20,7 +22,7 @@ class CustomerRepository:
         customer.cnpj = customer_data.get("cnpj")
         customer.annual_revenue = customer_data["annual_revenue"]
         customer.microcredit_eligible = microcredit_eligible
-        customer.kyc_status = kyc_status
+        customer.kyc_status = self.enumerators.get(KycStatus, kyc_status)
         customer.is_pep = customer_data.get("is_pep", False)
 
         self.session.add(customer)

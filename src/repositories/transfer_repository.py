@@ -5,12 +5,14 @@ from uuid import UUID
 from sqlalchemy import func, text, tuple_
 
 from database import Context
-from models import Account, Fee, Transfer
+from models import Account, Fee, Transfer, TransferStatus, TransferStatusEvent
+from repositories.enumerator_repository import EnumeratorRepository
 
 
 class TransferRepository:
     def __init__(self, context: Context) -> None:
         self.session = context.db_session
+        self.enumerators = EnumeratorRepository(context)
 
     def get_by_id(self, transfer_id: UUID) -> Transfer:
         return self.session.query(Transfer).filter(Transfer.id == transfer_id).first()
@@ -36,11 +38,13 @@ class TransferRepository:
         transfer.amount = amount
         transfer.fee = fee
         transfer.on_us = True
-        # TEF é síncrona: nasce e morre na mesma transação.
-        transfer.status = Transfer.COMPLETED
+        # TEF é síncrona: nasce e morre na mesma transação, já COMPLETED.
+        transfer.status = self.enumerators.get(TransferStatus, TransferStatus.COMPLETED)
         transfer.completed_at = func.now()
 
         self.session.add(transfer)
+        self._record_status_event(transfer, None, transfer.status, None)
+
         self.session.flush()
         return transfer
 
@@ -73,14 +77,15 @@ class TransferRepository:
         """Soma das saídas da conta desde o início da janela noturna (hora local)."""
         return self.session.execute(
             text(
-                "SELECT COALESCE(SUM(amount), 0) FROM transfer "
-                "WHERE source_account_id = :account_id "
-                "AND status = ANY(:statuses) "
-                "AND created_at >= (CAST(:window_start AS timestamp) AT TIME ZONE 'America/Sao_Paulo')"
+                "SELECT COALESCE(SUM(t.amount), 0) FROM transfer t "
+                "JOIN transfer_status s ON s.id = t.status_id "
+                "WHERE t.source_account_id = :account_id "
+                "AND s.enumerator = ANY(:statuses) "
+                "AND t.created_at >= (CAST(:window_start AS timestamp) AT TIME ZONE 'America/Sao_Paulo')"
             ),
             {
                 "account_id": account_id,
-                "statuses": list(Transfer.OUTFLOW_STATUSES),
+                "statuses": list(TransferStatus.OUTFLOW),
                 "window_start": local_window_start,
             },
         ).scalar_one()
@@ -94,7 +99,8 @@ class TransferRepository:
         )
 
         if statuses:
-            query = query.filter(Transfer.status.in_(statuses))
+            # O filtro chega com nomes ("COMPLETED"); a junção os traduz.
+            query = query.join(Transfer.status).filter(TransferStatus.enumerator.in_(statuses))
 
         if after is not None:
             after_created_at, after_id = after
@@ -103,3 +109,24 @@ class TransferRepository:
         query = query.order_by(Transfer.created_at.desc(), Transfer.id.desc())
 
         return query.limit(limit + 1).all()
+
+    def _record_status_event(
+        self,
+        transfer: Transfer,
+        from_status: Optional[TransferStatus],
+        to_status: TransferStatus,
+        reason: Optional[str],
+    ) -> None:
+        """Mesmo desenho do AccountRepository: o evento vai pendurado na relação.
+
+        Hoje só a TEF existe, e ela nasce final (null → COMPLETED). Quando
+        PIX/TED de saída chegarem (CREATED → SENT → COMPLETED/RETURNED),
+        cada transição passa por aqui.
+        """
+        event = TransferStatusEvent()
+        event.transfer = transfer
+        event.from_status = from_status
+        event.to_status = to_status
+        event.reason = reason
+
+        self.session.add(event)

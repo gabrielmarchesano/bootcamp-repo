@@ -20,7 +20,7 @@ class TransferDTO:
         return {
             "transfer_id": str(transfer.id),
             "method": transfer.method,
-            "status": transfer.status,
+            "status": transfer.status.enumerator,
             "amount": transfer.amount,
             "fee": transfer.fee,
             "source_account_id": str(transfer.source_account_id),
@@ -42,6 +42,6 @@ class TransferDTO:
             "incoming_transfer_id": str(incoming.id),
             "rail": incoming.rail,
             "external_id": incoming.external_id,
-            "status": incoming.status,
+            "status": incoming.status.enumerator,
             "amount": incoming.amount,
         }

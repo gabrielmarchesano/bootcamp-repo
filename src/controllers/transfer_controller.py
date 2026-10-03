@@ -15,7 +15,7 @@ from errors import (
     SameAccountTransfer,
     TransferNotFound,
 )
-from models import Account, LedgerEntry, OutboxEvent, Transfer
+from models import Account, AccountStatus, LedgerEntry, OutboxEvent, Transfer
 from repositories import AccountRepository, LedgerLeg, LedgerRepository, OutboxRepository, TransferRepository
 from utils.cursor import decode_cursor, encode_cursor
 from utils.db_retry import retry_on_deadlock
@@ -99,11 +99,11 @@ class TransferController(BaseController):
         if destination is None:
             raise AccountNotFound(destination_id)
 
-        if source.status != Account.ACTIVE:
-            raise AccountNotActive(source.id, source.status)
+        if source.status.enumerator != AccountStatus.ACTIVE:
+            raise AccountNotActive(source.id, source.status.enumerator)
 
-        if destination.status != Account.ACTIVE:
-            raise AccountNotActive(destination.id, destination.status)
+        if destination.status.enumerator != AccountStatus.ACTIVE:
+            raise AccountNotActive(destination.id, destination.status.enumerator)
 
         amount = payload["amount"]
         fee = self.transfer_repository.current_fee(Transfer.TEF, source.customer.type)

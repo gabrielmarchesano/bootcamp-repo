@@ -1,28 +1,20 @@
-from sqlalchemy import CHAR, BigInteger, Boolean, Column, Date, DateTime, ForeignKey, String, func
+from sqlalchemy import CHAR, BigInteger, Boolean, Column, Date, DateTime, ForeignKey, SmallInteger, String, func
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.transfer_status import TransferStatus
 
 
 class Transfer(Base):
     __tablename__ = "transfer"
 
-    # Métodos
+    # Métodos (classificação: não muda, fica como texto + CHECK)
     TEF = "TEF"
     PIX = "PIX"
     TED = "TED"
 
-    # Status
-    CREATED = "CREATED"
-    SCHEDULED = "SCHEDULED"
-    SENT = "SENT"
-    COMPLETED = "COMPLETED"
-    REJECTED = "REJECTED"
-    RETURNED = "RETURNED"
-    FAILED = "FAILED"
-
-    # Status que contam para o limite noturno: o dinheiro já saiu ou vai sair
-    OUTFLOW_STATUSES = (CREATED, SENT, COMPLETED)
+    # Os status moram em TransferStatus (tabela transfer_status).
 
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     idempotency_key = Column(String, nullable=False, unique=True)
@@ -31,7 +23,7 @@ class Transfer(Base):
     method = Column(String, nullable=False)
     amount = Column(BigInteger, nullable=False)
     fee = Column(BigInteger, nullable=False)
-    status = Column(String, nullable=False)
+    status_id = Column(SmallInteger, ForeignKey(TransferStatus.id), nullable=False)
     on_us = Column(Boolean, nullable=False)
     destination_account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"))
     pix_key = Column(String)
@@ -47,3 +39,11 @@ class Transfer(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
+
+    status = relationship("TransferStatus", foreign_keys=[status_id], lazy="selectin")
+    status_events = relationship(
+        "TransferStatusEvent",
+        back_populates="transfer",
+        order_by="TransferStatusEvent.id",
+        lazy="select",
+    )
