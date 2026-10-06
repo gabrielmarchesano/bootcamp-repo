@@ -16,11 +16,18 @@ class OutboxEvent(Base):
 
     __tablename__ = "outbox_event"
 
-    ACCOUNT_OPENED = "ACCOUNT_OPENED"
-    ACCOUNT_STATUS_CHANGED = "ACCOUNT_STATUS_CHANGED"
-    TRANSFER_COMPLETED = "TRANSFER_COMPLETED"
-    INCOMING_TRANSFER_CREDITED = "INCOMING_TRANSFER_CREDITED"
-    INCOMING_TRANSFER_RETURNED = "INCOMING_TRANSFER_RETURNED"
+    ACCOUNT_OPENED = "baas.account.opened"
+    ACCOUNT_STATUS_CHANGED = "baas.account.status_change"
+    OUTGOING_TEF = "baas.tef.outgoing_tef"
+    OUTGOING_PIX = "baas.pix_transfer.outgoing_pix"
+    INCOMING_PIX = "baas.pix_transfer.incoming_pix"
+    OUTGOING_TED = "baas.ted.outgoing_ted"
+    INCOMING_TED = "baas.ted.incoming_ted"
+    PIX_KEY_STATUS_CHANGED = "baas.pix_key.status_change"
+    CREDIT_WALLET_STATUS_CHANGED = "baas.credit_wallet.status_change"
+    CARD_STATUS_CHANGED = "baas.card.status_change"
+    CARD_AUTHORIZATION = "baas.card.authorization"
+ 
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     type = Column(String, nullable=False)

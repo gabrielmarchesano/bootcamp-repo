@@ -1,3 +1,6 @@
+from typing import Optional
+from uuid import UUID
+
 from database import Context
 from models import IncomingTransfer, IncomingTransferStatus
 from repositories.enumerator_repository import EnumeratorRepository
@@ -7,6 +10,10 @@ class IncomingTransferRepository:
     def __init__(self, context: Context) -> None:
         self.session = context.db_session
         self.enumerators = EnumeratorRepository(context)
+
+    
+    def get_by_id(self, incoming_transfer_id: UUID) -> Optional[IncomingTransfer]:
+        return self.session.query(IncomingTransfer).filter(IncomingTransfer.id == incoming_transfer_id).first()    
 
     def get_by_external_id(self, rail: str, external_id: str) -> IncomingTransfer:
         return (

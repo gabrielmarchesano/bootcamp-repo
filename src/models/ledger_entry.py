@@ -17,12 +17,21 @@ class LedgerEntry(Base):
     # Tipos de lançamento usados até aqui (a lista completa está no CHECK do database.sql)
     TEF_SENT = "TEF_SENT"
     TEF_RECEIVED = "TEF_RECEIVED"
+    PIX_SENT = "PIX_SENT"
     PIX_RECEIVED = "PIX_RECEIVED"
+    PIX_REVERSAL_SENT = "PIX_REVERSAL_SENT"
+    PIX_REVERSAL_RECEIVED = "PIX_REVERSAL_RECEIVED"
+    TED_SENT = "TED_SENT"
+    TED_RECEIVED = "TED_RECEIVED"
     TRANSFER_FEE = "TRANSFER_FEE"
-
+    DEBIT_PURCHASE = "DEBIT_PURCHASE"
+    PURCHASE_REFUND = "PURCHASE_REFUND"
+    REVERSAL = "REVERSAL"
+ 
     # Referências
     REF_TRANSFER = "TRANSFER"
     REF_INCOMING_TRANSFER = "INCOMING_TRANSFER"
+    REF_CARD_AUTHORIZATION = "CARD_AUTHORIZATION"
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     operation_id = Column(UUID(as_uuid=True), nullable=False)

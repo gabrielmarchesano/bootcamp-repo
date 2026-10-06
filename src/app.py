@@ -11,8 +11,13 @@ from middlewares import (
 )
 from resources import (
     AccountResource,
+    CardAuthorizationResource,
+    CardResource,
+    CreditWalletResource,
     CustomerResource,
     HealthCheckResource,
+    PixResource,
+    TedResource,
     TransferResource,
     WebhookResource,
 )
@@ -144,6 +149,11 @@ def create_app() -> FastAPI:
     account_resource = AccountResource()
     transfer_resource = TransferResource()
     webhook_resource = WebhookResource()
+    pix_resource = PixResource()
+    ted_resource = TedResource()
+    wallet_resource = CreditWalletResource()
+    card_resource = CardResource()
+    authorization_resource = CardAuthorizationResource()
 
     # A · Clientes e contas
     application.add_api_route("/customers", customer_resource.on_post, methods=["POST"])
@@ -157,7 +167,56 @@ def create_app() -> FastAPI:
     application.add_api_route("/transfers", transfer_resource.on_post, methods=["POST"])
     application.add_api_route("/transfers/{transfer_id}", transfer_resource.on_get_by_id, methods=["GET"])
     application.add_api_route("/accounts/{account_id}/transfers", account_resource.on_get_transfers, methods=["GET"])
+    application.add_api_route("/transfers/{transfer_id}/cancel", transfer_resource.on_patch_cancel, methods=["PATCH"])
     application.add_api_route("/webhooks/spi", webhook_resource.on_post_spi, methods=["POST"])
+    application.add_api_route("/webhooks/str", webhook_resource.on_post_str, methods=["POST"])
+
+    # C2 · Pix e TED — rotas por trilho, aninhadas na conta, como na QI
+    # (/account/{key}/pix_transfer, /account/{key}/ted). A tabela é uma só.
+    application.add_api_route("/accounts/{account_id}/pix_keys", pix_resource.on_post_key, methods=["POST"])
+    application.add_api_route("/accounts/{account_id}/pix_keys", pix_resource.on_get_keys, methods=["GET"])
+    application.add_api_route(
+        "/accounts/{account_id}/pix_keys/{pix_key_id}", pix_resource.on_delete_key, methods=["DELETE"]
+    )
+    application.add_api_route("/pix_keys/{pix_key}", pix_resource.on_get_lookup, methods=["GET"])
+    application.add_api_route("/accounts/{account_id}/pix_transfers", pix_resource.on_post_transfer, methods=["POST"])
+    application.add_api_route(
+        "/accounts/{account_id}/incoming_transfers/{incoming_transfer_id}/reversals",
+        pix_resource.on_post_reversal,
+        methods=["POST"],
+    )
+    application.add_api_route("/accounts/{account_id}/ted_transfers", ted_resource.on_post, methods=["POST"])
+
+    # D · Cartões e faturas — carteira (QI wallet) separada do cartão
+    application.add_api_route("/accounts/{account_id}/credit_wallets", wallet_resource.on_post, methods=["POST"])
+    application.add_api_route("/credit_wallets/{wallet_id}", wallet_resource.on_get_by_id, methods=["GET"])
+    application.add_api_route("/credit_wallets/{wallet_id}/limit", wallet_resource.on_patch_limit, methods=["PATCH"])
+    application.add_api_route("/credit_wallets/{wallet_id}/status", wallet_resource.on_patch_status, methods=["PATCH"])
+    application.add_api_route("/credit_wallets/{wallet_id}/invoices", wallet_resource.on_get_invoices, methods=["GET"])
+    application.add_api_route("/invoices/{invoice_id}", wallet_resource.on_get_invoice, methods=["GET"])
+    application.add_api_route("/accounts/{account_id}/cards", card_resource.on_post, methods=["POST"])
+    application.add_api_route("/accounts/{account_id}/cards", card_resource.on_get_by_account, methods=["GET"])
+    application.add_api_route("/cards/{card_id}", card_resource.on_get_by_id, methods=["GET"])
+    application.add_api_route("/cards/{card_id}/activate", card_resource.on_patch_activate, methods=["PATCH"])
+    application.add_api_route("/cards/{card_id}/status", card_resource.on_patch_status, methods=["PATCH"])
+
+    # D2 · Rede de cartão (papel da processadora). Autorização: 200 sempre.
+    application.add_api_route("/cards/authorizations", authorization_resource.on_post, methods=["POST"])
+    application.add_api_route(
+        "/cards/authorizations/{authorization_id}", authorization_resource.on_get, methods=["GET"]
+    )
+    application.add_api_route(
+        "/cards/authorizations/{authorization_id}/increments",
+        authorization_resource.on_post_increment,
+        methods=["POST"],
+    )
+    application.add_api_route(
+        "/cards/authorizations/{authorization_id}/reversals",
+        authorization_resource.on_post_reversal,
+        methods=["POST"],
+    )
+    application.add_api_route("/cards/captures", authorization_resource.on_post_capture, methods=["POST"])
+    application.add_api_route("/cards/refunds", authorization_resource.on_post_refund, methods=["POST"])
 
     register_error_handlers(application)
 

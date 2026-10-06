@@ -19,7 +19,7 @@ Legenda: ✅ implementado e testado · ⏳ próximo sprint
 | Rastreio | `X-Request-ID` em toda resposta (middleware do projeto base) |
 | Formato do erro | `{"title", "description", "translation", "code"}` — o envelope do projeto base |
 | Validação | Formato errado (JSON Schema): **400** `QIT000001`. Valor impossível ou regra de negócio: **422**. Conflito com o estado atual: **409** |
-| Idempotência | `Idempotency-Key` obrigatório em todo POST que move dinheiro (8–64 caracteres `A-Z a-z 0-9 - _`). Ausente/malformado → 400 `QIT001015`. Mesma key + mesmo corpo (SHA-256 canônico) → **200** com a resposta original. Mesma key + corpo diferente → 409 `QIT001016` |
+| Idempotência | `Idempotency-Key` obrigatório em todo POST que move dinheiro, no formato **UUID v4** (como o `request_control_key` da QI). Ausente/malformado → 400 `QIT001015`. A resposta ecoa o valor em `request_control_key`. Mesma key + mesmo corpo (SHA-256 canônico) → **200** com a resposta original. Mesma key + corpo diferente → 409 `QIT001016` |
 | Dinheiro | Inteiro em **centavos** (`150000` = R$ 1.500,00). Float é recusado pelo schema. Taxas em fração (`0.035`) |
 | Documentos | Só dígitos: CPF 11, CNPJ 14. Dígito verificador conferido (422 se não bater) |
 | Datas | ISO-8601 com fuso (`2026-09-30T23:18:09-03:00`) |
@@ -62,26 +62,61 @@ Guardrails MPO (Res. CMN 4.854/2020): taxa ≤ 4% a.m. · TAC ≤ 3%, proporcion
 
 ## C · Transferências
 
+Pix e TED seguem o padrão da API da QI Tech (docs.qitech.com.br), **sem integrar**: rotas por trilho aninhadas na conta, `pix_transfer_type`, `target_account` com dígito e tipo de conta, consulta ao DICT antes do Pix por chave, devolução de Pix recebido, 201 para o que já liquidou e 202 para o que espera o trilho. A tabela `transfer` é uma só para os três meios.
+
 | | Método | Rota | Corpo / params | Sucesso | Erros |
 |---|---|---|---|---|---|
-| ✅ TEF · ⏳ PIX/TED | POST | `/transfers` | **Idempotency-Key** · `source_account_id, method, amount, destination{account_id}` | TEF: **201** `COMPLETED` (200 no replay) | 400 · 404 `QIT001009` · 409 `QIT001013` conta não ativa · 409 `QIT001016` · 422 `QIT001017` saldo · 422 `QIT001018` mesma conta · 422 `QIT001019` limite noturno |
+| ✅ | POST | `/transfers` | **Idempotency-Key** · `source_account_id, method (TEF), amount, destination{account_id}` | **201** `COMPLETED` (200 no replay) | 400 · 404 `QIT001009` · 409 `QIT001013` · 409 `QIT001016` · 422 `QIT001017` · 422 `QIT001018` · 422 `QIT001019` |
 | ✅ | GET | `/transfers/{id}` | — | 200 | 404 `QIT001020` |
 | ✅ | GET | `/accounts/{id}/transfers` | `?status&limit&cursor` (origem OU destino) | 200 `items, next_cursor` | 400 · 404 |
-| ✅ RECEIVED · ⏳ demais | POST | `/webhooks/spi` | `event, external_id, amount, destination_account{branch, number}, sender{name, document, ispb}` | **200 sempre** `status (CREDITED\|RETURNED)`; repetição devolve o original | 400 · 403 |
-| ⏳ | POST | `/webhooks/str` | — | 200 | — |
+| ✅ | PATCH | `/transfers/{id}/cancel` | — | 200 `CANCELED` | 404 · 409 `QIT001028` (só `SCHEDULED`) |
+| ✅ | POST | `/accounts/{id}/pix_keys` | `key_type (CPF\|CNPJ\|EMAIL\|PHONE\|EVP), key_value?` (EVP é gerada pela API) | 201 | 404 · 409 `QIT001013` · 409 `QIT001029` já registrada · 409 `QIT001040` teto (PF 5, MEI 20) · 422 `QIT001041` CPF/CNPJ de outro titular |
+| ✅ | GET · DELETE | `/accounts/{id}/pix_keys` · `/accounts/{id}/pix_keys/{pix_key_id}` | — | 200 | 404 |
+| ✅ | GET | `/pix_keys/{chave}` | `?account_id` (quem consulta) | 200 `end_to_end_id, ispb, account_*, owner_name, owner_masked_document, owner_person_type, on_us, expires_at` | 400 · 404 `QIT001021` |
+| ✅ | POST | `/accounts/{id}/pix_transfers` | **Idempotency-Key** · `pix_transfer_type`. `KEY`: `pix_key, end_to_end_id, amount, pix_message?`. `MANUAL`: `target_account{ispb, branch, number, digit?, document, name, account_type}, amount, pix_message?` | on-us **201** `COMPLETED` · externo **202** `SENT` · 200 replay | 404 `QIT001036` consulta de outra conta · 409 `QIT001022` e2e já usado · 422 `QIT001023` consulta expirada · `QIT001024` emoji · `QIT001037` chave ≠ consulta · `QIT001042` destino inválido · `QIT001017` · `QIT001019` |
+| ✅ | POST | `/accounts/{id}/incoming_transfers/{incoming_id}/reversals` | **Idempotency-Key** · `amount, reversal_reason (CLIENT_REQUEST\|RECONCILIATION), pix_message?` | **202** `SENT` (id começa com `D`) | 404 `QIT001038` · 409 `QIT001013` · 422 `QIT001026` soma > recebido · `QIT001027` > 90 dias · `QIT001039` não devolvível |
+| ✅ | POST | `/accounts/{id}/ted_transfers` | **Idempotency-Key** · `target_account{…}, amount, schedule_date?` | **202** `SENT` ou `SCHEDULED` | 422 `QIT001025` fora da janela sem data · `QIT001049` data inválida · `QIT001042` TED para esta IF |
+| ✅ | POST | `/webhooks/spi` | `event`: `RECEIVED` (`external_id, amount, destination_account, sender, pix_transfer_type?, receiver_pix_key?, pix_message?, original_end_to_end_id` se `REVERSAL`) · `SETTLED` (`end_to_end_id`) · `REJECTED` (`end_to_end_id, error_code, error_description?`) | **200 sempre** | 400 · 403 |
+| ✅ | POST | `/webhooks/str` | `event`: `RECEIVED` (como o SPI) · `SETTLED` · `RETURNED` (`str_control_number, reason?`) | **200 sempre** | 400 · 403 |
 
-TEF: saldo disponível precisa cobrir `amount + fee`. Origem e destino `ACTIVE`. Lançamento: `TEF_SENT −amount origem / TEF_RECEIVED +amount destino` e, se houver tarifa, `TRANSFER_FEE −fee origem / +fee FEE_REVENUE`.
-PIX recebido: credita contas `ACTIVE` ou `BLOCKED`; qualquer outro caso vira `RETURNED`, sem lançamento. Lançamento: `PIX_RECEIVED −amount SPI_SETTLEMENT / +amount cliente`.
-Limite noturno: 20h–6h (Brasília), soma das saídas ≤ R$ 1.000,00, exatamente no teto é permitido.
-Tarifa: tabela `fee(method, customer_type)`, vigente por `effective_from`.
+**Regras que o banco garante** (testadas em `tests/integration/database`): o `end_to_end_id` do Pix por chave tem de vir de uma consulta da **mesma conta** (FK composta) e vale para **uma** transferência (UNIQUE); formato BCB `E|D + ISPB + yyyyMMddHHmm + 11`; devolução sempre com entrada original e motivo.
 
-## D · Cartões e faturas ⏳
+**Lançamentos.** Pix externo: `PIX_SENT −amount cliente / +amount SPI_SETTLEMENT`. Pix on-us: `PIX_SENT / PIX_RECEIVED` entre as contas. Devolução: `PIX_REVERSAL_SENT` e `PIX_REVERSAL_RECEIVED`. TED: `TED_SENT` contra `STR_SETTLEMENT`. Pix rejeitado devolve valor e tarifa (`REVERSAL`). TED devolvida devolve só o valor: a TED foi executada.
 
-Sem mudança em relação ao contrato v6: emissão, autorização (HOLD/reserva), desfazimento, captura, estorno, faturas, pagamento e encargos. Chamador PROCESSOR ganha token próprio quando o sprint começar.
+**Decisões do time.** TED fora da janela (dia útil, 6h30–17h) com `schedule_date` ausente recebe 422 — a API não reagenda sozinha (QI `TED000011`). Agendada não debita na criação: saldo e limite são conferidos na execução. Consulta ao DICT vale 15 min (premissa: a QI não publica). Devolução não conta no limite noturno. DICT de chaves externas é um mock (`src/utils/dict_mock.py`: `fornecedor@externo.com`, `+5511988887777`).
+
+## D · Cartões e faturas
+
+A **carteira de crédito** (`credit_wallet`, o "wallet" da QI) tem o limite, o ciclo e os encargos. Os cartões (virtual, físico, reemissão) são instrumentos que consomem o MESMO limite e caem na MESMA fatura. Cartão só de débito não tem carteira e debita a conta.
+
+| | Método | Rota | Corpo / params | Sucesso | Erros |
+|---|---|---|---|---|---|
+| ✅ | POST | `/accounts/{id}/credit_wallets` | `total_limit, closing_day, due_day (1–28), monthly_interest_rate, fine_rate (≤ 0.02), autopay?` | 201 `ACTIVE` | 404 · 409 `QIT001013` · 409 `QIT001030` já existe carteira viva |
+| ✅ | GET | `/credit_wallets/{id}` | — | 200 com `available_limit` e `status_events` | 404 `QIT001044` |
+| ✅ | PATCH | `/credit_wallets/{id}/limit` | `total_limit` | 200 | 422 `QIT001031` abaixo do usado |
+| ✅ | PATCH | `/credit_wallets/{id}/status` | `status (ACTIVE\|BLOCKED\|CLOSED), reason` | 200 | 409 `QIT001032` (fechar exige `used_limit = 0`) |
+| ✅ | GET | `/credit_wallets/{id}/invoices` · `/invoices/{id}` | `?status` | 200 (detalhe com itens) | 404 `QIT001048` |
+| ✅ | POST | `/accounts/{id}/cards` | `type (VIRTUAL\|PLASTIC), functions (DEBIT\|CREDIT\|MULTIPLE), printed_name, card_name?, brand?, contactless_enabled?` (só físico) | 201: virtual `ACTIVE`, físico `EMBOSSING` (+ `activation_code` fora de produção) | 409 `QIT001013` · 422 `QIT001045` crédito sem carteira ativa |
+| ✅ | GET | `/accounts/{id}/cards` · `/cards/{id}` | — | 200 com `status_events` (a QI expõe o mesmo) | 404 `QIT001043` |
+| ✅ | PATCH | `/cards/{id}/activate` | `code` (6 dígitos) | 200 `ACTIVE` | 409 `QIT001032` · 422 `QIT001033` código · 422 `QIT001034` não é físico |
+| ✅ | PATCH | `/cards/{id}/status` | `status (ACTIVE\|BLOCKED\|CANCELED\|LOST\|STOLEN\|FRAUD), reason` | 200 | 409 `QIT001032` |
+| ✅ | POST | `/cards/authorizations` | `authorization_id, card_id, function, amount, installment_count? (só crédito), merchant_name?, mcc?` | **200 sempre** `APPROVED` (`00`) ou `DECLINED` + `denial_reason` (`51` saldo/limite · `62` cartão · `57` conta/carteira/função · `14` cartão inexistente) | 400 · 403 |
+| ✅ | GET | `/cards/authorizations/{authorization_id}` | — | 200 com `events` | 404 `QIT001046` |
+| ✅ | POST | `/cards/authorizations/{authorization_id}/increments` | `request_id, amount` | 200 com `decision` | 404 · 409 `QIT001047` |
+| ✅ | POST | `/cards/authorizations/{authorization_id}/reversals` | `request_id, amount?` (sem amount = total) | 200 | 400 · 404 · 409 `QIT001047` |
+| ✅ | POST | `/cards/captures` · `/cards/refunds` | `capture_id\|refund_id, authorization_id, amount` | 200 (idempotente pelo id da rede) | 404 · 409 `QIT001047` · 422 `QIT001035` estorno > captura |
+
+**Transições.** Cartão: `EMBOSSING → ACTIVE` só pelo código; `EMBOSSING → CANCELED|LOST|STOLEN`; `ACTIVE ↔ BLOCKED`; `ACTIVE|BLOCKED → CANCELED|LOST|STOLEN|FRAUD`. Terminais: `CANCELED, LOST, STOLEN, FRAUD`. Carteira: `ACTIVE ↔ BLOCKED`, `ACTIVE|BLOCKED → CLOSED`.
+
+**Dinheiro da autorização** (`card_authorization_event`, enumerador da QI 1 para 1). `AUTHORIZATION`/`INCREMENTAL_AUTHORIZATION` criam HOLD (débito, `held_balance`) ou reserva (crédito, `used_limit`). `REVERSAL`/`PARTIAL_REVERSAL` soltam. A primeira `CAPTURE` troca o HOLD pelo valor capturado (pode ser maior ou menor): débito lança `DEBIT_PURCHASE` contra `CARD_SETTLEMENT`; crédito lança as parcelas nas faturas. `REFUND`/`PARTIAL_REFUND` são eventos: a autorização segue `CAPTURED` (o "completed" da QI). `REFUNDED` fica no enumerador, mas deixou de ser destino.
+
+**Faturas.** Compra antes do dia de fechamento cai na fatura que fecha neste mês; no dia ou depois, na do mês seguinte. Vencimento: o primeiro `due_day` depois do fechamento, ajustado a dia útil. Parcela *k* cai *k−1* meses depois; faturas de meses seguintes nascem `FUTURE` (id 6) e viram `OPEN` quando a anterior fechar. Compra no crédito não gera lançamento no ledger: até o pagamento, o registro é a fatura.
 
 ## Jobs ⏳
 
-`collect_installments` · `run_scheduled_teds` · `reconcile_spi_str` · `expire_authorizations` · `close_invoices` · `run_invoice_autopay` · `mark_overdue_invoices` · `dispatch_outbox_events` (o outbox já é gravado; falta quem envie).
+`collect_installments` · `run_scheduled_teds` (SCHEDULED → SENT\|FAILED) · `reconcile_spi_str` · `expire_authorizations` (APPROVED → EXPIRED + evento `EXPIRATION`) · `close_invoices` (OPEN → CLOSED e FUTURE → OPEN) · `run_invoice_autopay` · `mark_overdue_invoices` · `dispatch_outbox_events`. O outbox já grava `type` no padrão de `webhook_type` da QI (`baas.pix_transfer.outgoing_pix`, `baas.card.status_change`…); o job embrulha em `{webhook_type, webhook_datetime, data}`.
+
+Ainda não construídos no sprint 4: pagamento de fatura (`POST /invoices/{id}/payments`) e encargos do rotativo (`POST /invoices/{id}/charges`).
 
 ---
 
@@ -104,8 +139,37 @@ Sem mudança em relação ao contrato v6: emissão, autorização (HOLD/reserva)
 | `QIT001018` | 422 | `SAME_ACCOUNT` | origem = destino |
 | `QIT001019` | 422 | `NIGHT_LIMIT_EXCEEDED` | teto noturno estourado |
 | `QIT001020` | 404 | — | transferência não encontrada |
+| `QIT001021` | 404 | QI `PIX000017` | chave Pix não encontrada no DICT |
+| `QIT001022` | 409 | QI `PXT000061` | `end_to_end_id` já usado |
+| `QIT001023` | 422 | — | consulta ao DICT expirada |
+| `QIT001024` | 422 | QI `PXT000048` | emoji na `pix_message` |
+| `QIT001025` | 422 | QI `TED000011` | TED fora da janela sem `schedule_date` |
+| `QIT001026` | 422 | QI `PXT000017` | devoluções acima do recebido |
+| `QIT001027` | 422 | QI `PXT000015` | devolução depois de 90 dias |
+| `QIT001028` | 409 | QI `PSC000028` | cancelar transferência que não está `SCHEDULED` |
+| `QIT001029` | 409 | — | chave Pix já registrada |
+| `QIT001030` | 409 | QI `CIN000043` | carteira viva já existe |
+| `QIT001031` | 422 | QI `CIN000110` | novo limite abaixo do usado |
+| `QIT001032` | 409 | QI `CARD000013` | transição inválida de cartão ou carteira |
+| `QIT001033` | 422 | QI `CARD000020` | código de ativação inválido |
+| `QIT001034` | 422 | QI `CARD000023` | operação só para cartão físico |
+| `QIT001035` | 422 | — | estorno acima do capturado |
+| `QIT001036` | 404 | QI `PIX000056` | consulta ao DICT não encontrada para esta conta |
+| `QIT001037` | 422 | QI `PXT000128` | chave enviada ≠ chave da consulta |
+| `QIT001038` | 404 | — | entrada não encontrada (ou de outra conta) |
+| `QIT001039` | 422 | — | entrada não devolvível (STR, devolvida, ou já é devolução) |
+| `QIT001040` | 409 | Regulamento Pix | teto de chaves (PF 5, PJ 20) |
+| `QIT001041` | 422 | — | chave CPF/CNPJ de outro titular |
+| `QIT001042` | 422 | QI `PXT000132`/`PXT000141` | conta de destino inválida |
+| `QIT001043` | 404 | QI `CARD000011` | cartão não encontrado |
+| `QIT001044` | 404 | QI `CIN000007` | carteira não encontrada |
+| `QIT001045` | 422 | — | cartão com crédito sem carteira ativa |
+| `QIT001046` | 404 | — | autorização não encontrada |
+| `QIT001047` | 409 | — | operação não aceita no status da autorização |
+| `QIT001048` | 404 | — | fatura não encontrada |
+| `QIT001049` | 422 | QI `PSC000008` | `schedule_date` não é dia útil futuro |
 
-Próximo livre: `QIT001021`. Aposentados, não reutilizar: `QIT001001`, `001002`, `001004`, `001005`, `001006` (eram do `sample_entity`, removido).
+Próximo livre: `QIT001050`. Aposentados, não reutilizar: `QIT001001`, `001002`, `001004`, `001005`, `001006` (eram do `sample_entity`, removido).
 
 ---
 
@@ -120,3 +184,8 @@ Próximo livre: `QIT001021`. Aposentados, não reutilizar: `QIT001001`, `001002`
 | Tarifa TEF R$ 0 | **R$ 1,00 (premissa)** | O bootcamp exige tarifa na transferência; com zero, o requisito não aparece na demo. PIX segue gratuito |
 | Resposta do POST /customers | + `branch`, `account_number`, `status_reason` | É o endereço que o SPI usa para creditar PIX |
 | Item do extrato | + `entry_id`, `reference_type`, `reference_id` | Liga cada linha à transferência que a gerou |
+| `Idempotency-Key` livre (8–64) | UUID v4 | Mesmo formato do `request_control_key` da QI; todo cliente já gera UUID v4 |
+| `POST /transfers` para TEF, PIX e TED | Rotas por trilho para Pix e TED | Padrão da QI (`/account/{key}/pix_transfer`, `/account/{key}/ted`). A tabela segue única |
+| Limite e fatura no cartão | Carteira de crédito (`credit_wallet`) | Padrão da QI (wallet): um limite e uma fatura para todos os cartões do cliente |
+| `card_capture` e `card_refund` | `card_authorization_event` | Enumerador de eventos da QI; ganha incremental, reversão parcial e expiração |
+| Tipos do outbox `TRANSFER_COMPLETED`… | `baas.<recurso>.<evento>` | É o `webhook_type` da QI |

@@ -34,3 +34,29 @@ class ObjectGenerator:
         status, account = RequestGenerator.GET_account(account_id)
         assert status == 200, account
         return account["balance"]
+
+    @staticmethod
+    def create_credit_wallet(account_id: str, total_limit: int = 500_000) -> dict:
+        status, wallet = RequestGenerator.POST_credit_wallet(
+            account_id, PayloadGenerator.create_credit_wallet_payload(total_limit=total_limit)
+        )
+        assert status == 201, wallet
+        return wallet
+
+    @staticmethod
+    def create_card(account_id: str, card_type: str = "VIRTUAL", functions: str = "MULTIPLE") -> dict:
+        status, card = RequestGenerator.POST_card(account_id, PayloadGenerator.create_card_payload(card_type, functions))
+        assert status == 201, card
+        return card
+
+    @staticmethod
+    def own_pix_key(account_id: str, email: str) -> dict:
+        status, pix_key = RequestGenerator.POST_pix_key(account_id, {"key_type": "EMAIL", "key_value": email})
+        assert status == 201, pix_key
+        return pix_key
+
+    @staticmethod
+    def lookup(pix_key: str, account_id: str) -> dict:
+        status, inquiry = RequestGenerator.GET_pix_key_lookup(pix_key, account_id)
+        assert status == 200, inquiry
+        return inquiry

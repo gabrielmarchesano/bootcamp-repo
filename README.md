@@ -359,9 +359,9 @@ lições de segurança que cabem em cinco linhas.
 
 ### Todas as rotas
 
-Doze endereços respondem hoje. O contrato completo — inclusive o que
-ainda vai ser construído (microcrédito, PIX e TED de saída, cartões) —
-está em **`docs/api-contract.md`**.
+Trinta e oito endereços respondem hoje. O contrato completo — com corpo,
+erros e o que ainda vai ser construído (microcrédito, jobs) — está em
+**`docs/api-contract.md`**.
 
 | Método e rota | O que faz | Responde |
 |---|---|---|
@@ -374,11 +374,25 @@ está em **`docs/api-contract.md`**.
 | `PATCH /accounts/{id}/status` | muda o status (`ACTIVE`, `REJECTED`, `BLOCKED`, `CLOSED`) | `200` + a conta |
 | `GET /accounts/{id}/statement` | extrato, do mais novo ao mais antigo | `200` + a página |
 | `GET /accounts/{id}/transfers` | transferências em que a conta é origem ou destino | `200` + a página |
-| `POST /transfers` | transfere (hoje, só TEF) — exige `Idempotency-Key` | `201` (ou `200` na repetição) |
+| `POST /transfers` | TEF — exige `Idempotency-Key` (UUID v4) | `201` (ou `200` na repetição) |
 | `GET /transfers/{id}` | busca uma transferência | `200` + a transferência |
-| `POST /webhooks/spi` | PIX recebido (papel do SPI) | `200`, sempre |
+| `PATCH /transfers/{id}/cancel` | cancela um agendamento | `200` |
+| `POST /accounts/{id}/pix_keys` · `GET` · `DELETE …/{pix_key_id}` | chaves Pix da conta | `201` · `200` · `200` |
+| `GET /pix_keys/{chave}?account_id=` | consulta ao DICT (mock): devolve o `end_to_end_id` | `200` |
+| `POST /accounts/{id}/pix_transfers` | Pix por chave ou manual — exige `Idempotency-Key` | `201` on-us · `202` externo |
+| `POST /accounts/{id}/incoming_transfers/{id}/reversals` | devolve um Pix recebido | `202` |
+| `POST /accounts/{id}/ted_transfers` | TED agora ou agendada | `202` |
+| `POST /webhooks/spi` · `POST /webhooks/str` | papel dos trilhos: entrada, liquidação, rejeição, devolução | `200`, sempre |
+| `POST /accounts/{id}/credit_wallets` | carteira de crédito (limite, ciclo, encargos) | `201` |
+| `GET /credit_wallets/{id}` · `PATCH …/limit` · `PATCH …/status` | consulta e manutenção da carteira | `200` |
+| `GET /credit_wallets/{id}/invoices` · `GET /invoices/{id}` | faturas | `200` |
+| `POST /accounts/{id}/cards` · `GET /accounts/{id}/cards` | emite e lista cartões | `201` · `200` |
+| `GET /cards/{id}` · `PATCH …/activate` · `PATCH …/status` | consulta, ativação do físico, status | `200` |
+| `POST /cards/authorizations` | autorização da rede | `200`, sempre |
+| `GET /cards/authorizations/{id}` · `POST …/increments` · `POST …/reversals` | autorização: consulta, incremental, reversão | `200` |
+| `POST /cards/captures` · `POST /cards/refunds` | captura e estorno | `200` |
 
-As dez de baixo exigem o `INTERNAL-TOKEN` (seção 6). As duas de cima
+Todas, menos as duas de cima, exigem o `INTERNAL-TOKEN` (seção 6). As duas de cima
 são abertas — a primeira você já usou: foi ela que respondeu no
 navegador.
 

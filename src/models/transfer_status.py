@@ -19,6 +19,7 @@ class TransferStatus(Base):
     REJECTED = "REJECTED"
     RETURNED = "RETURNED"
     FAILED = "FAILED"
+    CANCELED = "CANCELED"
  
     # Status que contam para o limite noturno: o dinheiro já saiu ou vai sair
     OUTFLOW = (CREATED, SENT, COMPLETED)

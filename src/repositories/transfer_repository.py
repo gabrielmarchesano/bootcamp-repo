@@ -47,6 +47,85 @@ class TransferRepository:
 
         self.session.flush()
         return transfer
+    
+    def create_outgoing(
+        self,
+        idempotency_key: str,
+        request_hash: str,
+        source: Account,
+        method: str,
+        amount: int,
+        fee: int,
+        status: str,
+        reason: Optional[str] = None,
+        **fields,
+    ) -> Transfer:
+        """Pix e TED de saída. Mesmo desenho da TEF: nasce com o evento null → status.
+ 
+        `fields` são as colunas de destino e de trilho (pix_key, end_to_end_id,
+        destination_*, scheduled_for…). Quem decide quais vão é o controller;
+        quem confere se a combinação faz sentido é o CHECK ck_destination_by_method.
+        """
+        transfer = Transfer()
+        transfer.idempotency_key = idempotency_key
+        transfer.request_hash = request_hash
+        transfer.source_account_id = source.id
+        transfer.method = method
+        transfer.amount = amount
+        transfer.fee = fee
+        transfer.on_us = fields.pop("on_us", False)
+        for name, value in fields.items():
+            setattr(transfer, name, value)
+        transfer.status = self.enumerators.get(TransferStatus, status)
+        if status == TransferStatus.COMPLETED:
+            transfer.completed_at = func.now()
+ 
+        self.session.add(transfer)
+        self._record_status_event(transfer, None, transfer.status, reason)
+ 
+        self.session.flush()
+        return transfer
+ 
+    def get_by_end_to_end_id(self, end_to_end_id: str) -> Optional[Transfer]:
+        return self.session.query(Transfer).filter(Transfer.end_to_end_id == end_to_end_id).first()
+ 
+    def get_by_str_control_number(self, control_number: str) -> Optional[Transfer]:
+        return self.session.query(Transfer).filter(Transfer.str_control_number == control_number).first()
+ 
+    def lock(self, transfer: Transfer) -> Transfer:
+        """Trava a linha da transferência (depois das contas, na ordem global)."""
+        return (
+            self.session.query(Transfer)
+            .filter(Transfer.id == transfer.id)
+            .populate_existing()
+            .with_for_update()
+            .one()
+        )
+ 
+    def update_status(self, transfer: Transfer, new_status: str, reason: Optional[str] = None) -> None:
+        """Muda o status E grava o evento. A transição já foi conferida pelo controller."""
+        old_status = transfer.status
+        transfer.status = self.enumerators.get(TransferStatus, new_status)
+        transfer.updated_at = func.now()
+        if new_status == TransferStatus.COMPLETED:
+            transfer.completed_at = func.now()
+        self._record_status_event(transfer, old_status, transfer.status, reason)
+ 
+    def reversed_total(self, incoming_transfer_id: UUID) -> int:
+        """Quanto já saiu (ou está saindo) em devolução desta entrada.
+ 
+        Conta tudo que não morreu: devolução REJECTED/FAILED/CANCELED não
+        devolveu nada e não ocupa o teto.
+        """
+        return self.session.execute(
+            text(
+                "SELECT COALESCE(SUM(t.amount), 0) FROM transfer t "
+                "JOIN transfer_status s ON s.id = t.status_id "
+                "WHERE t.original_incoming_transfer_id = :incoming_id "
+                "AND s.enumerator NOT IN ('REJECTED', 'FAILED', 'CANCELED')"
+            ),
+            {"incoming_id": incoming_transfer_id},
+        ).scalar_one()
 
     def current_fee(self, method: str, customer_type: str) -> int:
         """A tarifa vigente hoje: a de `effective_from` mais recente que já começou."""

@@ -76,7 +76,8 @@ CREATE TABLE transfer_status (
 );
 INSERT INTO transfer_status (id, enumerator) VALUES
     (1, 'CREATED'),  (2, 'SCHEDULED'), (3, 'SENT'), (4, 'COMPLETED'),
-    (5, 'REJECTED'), (6, 'RETURNED'),  (7, 'FAILED');
+    (5, 'REJECTED'), (6, 'RETURNED'),  (7, 'FAILED'),
+    (8, 'CANCELED');   -- agendamento cancelado pelo cliente (QI: pix_schedule "cancelled")
  
 CREATE TABLE incoming_transfer_status (
     id          SMALLINT    PRIMARY KEY,
@@ -90,12 +91,16 @@ CREATE TABLE card_status (
     enumerator  VARCHAR(30) NOT NULL UNIQUE
 );
 INSERT INTO card_status (id, enumerator) VALUES
-    (1, 'ACTIVE'), (2, 'BLOCKED'), (3, 'CANCELED');
+    (1, 'ACTIVE'),    (2, 'BLOCKED'), (3, 'CANCELED'),
+    (4, 'EMBOSSING'), (5, 'LOST'),    (6, 'STOLEN'),   (7, 'FRAUD');
  
 CREATE TABLE card_authorization_status (
     id          SMALLINT    PRIMARY KEY,
     enumerator  VARCHAR(30) NOT NULL UNIQUE
 );
+-- REFUNDED (6) fica na lista (enumerador é append-only), mas deixou de
+-- ser destino: estorno é EVENTO (card_authorization_event) e a autorização
+-- segue CAPTURED, como o "completed" da QI. Quanto voltou diz o refunded_amount.
 INSERT INTO card_authorization_status (id, enumerator) VALUES
     (1, 'APPROVED'), (2, 'DECLINED'), (3, 'CAPTURED'),
     (4, 'EXPIRED'),  (5, 'REVERSED'), (6, 'REFUNDED');
@@ -104,9 +109,27 @@ CREATE TABLE invoice_status (
     id          SMALLINT    PRIMARY KEY,
     enumerator  VARCHAR(30) NOT NULL UNIQUE
 );
+-- FUTURE: fatura de mês seguinte que já recebe parcelas de compra
+-- parcelada. Vira OPEN quando a anterior fecha (job close_invoices).
 INSERT INTO invoice_status (id, enumerator) VALUES
-    (1, 'OPEN'), (2, 'CLOSED'), (3, 'PARTIALLY_PAID'), (4, 'PAID'), (5, 'OVERDUE');
+    (1, 'OPEN'), (2, 'CLOSED'), (3, 'PARTIALLY_PAID'), (4, 'PAID'), (5, 'OVERDUE'),
+    (6, 'FUTURE');
  
+CREATE TABLE pix_key_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO pix_key_status (id, enumerator) VALUES
+    (1, 'ACTIVE'), (2, 'DELETED');
+ 
+CREATE TABLE credit_wallet_status (
+    id          SMALLINT    PRIMARY KEY,
+    enumerator  VARCHAR(30) NOT NULL UNIQUE
+);
+INSERT INTO credit_wallet_status (id, enumerator) VALUES
+    (1, 'ACTIVE'), (2, 'BLOCKED'), (3, 'CLOSED');
+
+
 CREATE TABLE outbox_event_status (
     id          SMALLINT    PRIMARY KEY,
     enumerator  VARCHAR(30) NOT NULL UNIQUE
@@ -144,7 +167,7 @@ CREATE SEQUENCE account_number_seq START 1;
 CREATE TABLE account (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type             TEXT NOT NULL CHECK (type IN ('CUSTOMER','INTERNAL')),
-    customer_id      UUID UNIQUE REFERENCES customer(id),
+    customer_id      UUID NOT NULL REFERENCES customer(id),
     internal_code    TEXT UNIQUE,  -- só para contas INTERNAL
     branch           CHAR(4),
     number           TEXT UNIQUE,
@@ -188,6 +211,7 @@ CREATE TABLE ledger_entry (
                         'DISBURSEMENT','ORIGINATION_FEE',
                         'TEF_SENT','TEF_RECEIVED',
                         'PIX_SENT','PIX_RECEIVED',
+                        'PIX_REVERSAL_SENT','PIX_REVERSAL_RECEIVED',
                         'TED_SENT','TED_RECEIVED',
                         'TRANSFER_FEE',
                         'INSTALLMENT_PAYMENT',
@@ -286,8 +310,7 @@ CREATE TABLE installment (
     interest_amount     BIGINT NOT NULL CHECK (interest_amount >= 0),
     total_amount        BIGINT GENERATED ALWAYS AS (principal_amount + interest_amount) STORED,
     paid_amount         BIGINT NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),
-    status              TEXT NOT NULL DEFAULT 'OPEN'
-                        CHECK (status IN ('OPEN','PARTIAL','OVERDUE','PAID')),
+    status_id           SMALLINT NOT NULL REFERENCES installment_status(id),
     days_overdue        INT NOT NULL DEFAULT 0 CHECK (days_overdue >= 0),
     paid_at             TIMESTAMPTZ,
     UNIQUE (loan_id, number),
@@ -336,29 +359,99 @@ CREATE TABLE payment_allocation (
 -- ---------------------------------------------------------------------
 -- 4. Transferências (TEF · PIX · TED)
 -- ---------------------------------------------------------------------
+-- 4a. Chaves Pix dos NOSSOS clientes. É o registro que o DICT mock lê
+--     para resolver um Pix entre contas da casa. Limite por conta
+--     (PF 5, PJ 20) fica no PixKeyController.
+CREATE TABLE pix_key (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id  UUID NOT NULL REFERENCES account(id),
+    key_type    TEXT NOT NULL CHECK (key_type IN ('CPF','CNPJ','EMAIL','PHONE','EVP')),
+    key_value   VARCHAR(77) NOT NULL,
+    status_id   SMALLINT NOT NULL REFERENCES pix_key_status(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- A mesma chave só vive em uma conta; apagada, pode renascer em outra.
+CREATE UNIQUE INDEX ux_pix_key_active ON pix_key (key_value) WHERE status_id = 1;  -- ACTIVE
+CREATE INDEX ix_pix_key_account ON pix_key (account_id) WHERE status_id = 1;       -- ACTIVE
+ 
+CREATE TABLE pix_key_status_event (
+    id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    pix_key_id      UUID     NOT NULL REFERENCES pix_key(id),
+    from_status_id  SMALLINT REFERENCES pix_key_status(id),            -- nulo ao nascer
+    to_status_id    SMALLINT NOT NULL REFERENCES pix_key_status(id),
+    reason          VARCHAR(255),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_pix_key_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_pix_key_status_event ON pix_key_status_event (pix_key_id, id);
+ 
+-- 4b. Consulta ao DICT (QI: GET /pix_key/{key}?account_key=). Devolve o
+--     end_to_end_id que o Pix por chave TEM de usar. Duas regras da QI
+--     viram integridade:
+--       • o e2e vale só para a conta que consultou  → FK composta em transfer
+--       • o e2e vale para UMA transferência          → UNIQUE em transfer
+--     Registro de fato, append-only. "Foi usada" não é estado da consulta:
+--     é existir uma transferência apontando para ela.
+CREATE TABLE pix_key_inquiry (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id              UUID NOT NULL REFERENCES account(id),     -- quem consultou
+    pix_key                 VARCHAR(77) NOT NULL,
+    key_type                TEXT NOT NULL CHECK (key_type IN ('CPF','CNPJ','EMAIL','PHONE','EVP')),
+    end_to_end_id           CHAR(32) NOT NULL UNIQUE
+                            CHECK (end_to_end_id ~ '^E[0-9]{8}[0-9]{12}[A-Za-z0-9]{11}$'),
+    -- resposta do DICT (documento sempre mascarado, como o BCB devolve)
+    ispb                    CHAR(8) NOT NULL,
+    account_branch          VARCHAR(4) NOT NULL,
+    account_number          VARCHAR(20) NOT NULL,
+    account_digit           CHAR(1),
+    account_type            TEXT NOT NULL CHECK (account_type IN ('CHECKING','SALARY','SAVINGS','PAYMENT')),
+    owner_name              VARCHAR(120) NOT NULL,
+    owner_masked_document   VARCHAR(18) NOT NULL,
+    owner_person_type       TEXT NOT NULL CHECK (owner_person_type IN ('NATURAL','LEGAL')),
+    destination_account_id  UUID REFERENCES account(id),              -- preenchido se a chave é nossa
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at              TIMESTAMPTZ NOT NULL,
+    CONSTRAINT ck_inquiry_window CHECK (expires_at > created_at),
+    CONSTRAINT ux_inquiry_ref UNIQUE (id, account_id, end_to_end_id)  -- alvo da FK composta
+);
+CREATE INDEX ix_pix_key_inquiry_account ON pix_key_inquiry (account_id, created_at DESC);
+ 
+-- 4c. Transferência de saída. Uma tabela para os três meios; as rotas da
+--     API é que são separadas por trilho, como na QI.
 CREATE TABLE transfer (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     idempotency_key         TEXT NOT NULL UNIQUE,
     request_hash            CHAR(64) NOT NULL,
     source_account_id       UUID NOT NULL REFERENCES account(id),
     method                  TEXT NOT NULL CHECK (method IN ('TEF','PIX','TED')),
+    -- QI pix_transfer_type. QR code (static/dynamic) fica para a v2.
+    pix_transfer_type       TEXT CHECK (pix_transfer_type IN ('KEY','MANUAL','REVERSAL')),
     amount                  BIGINT NOT NULL CHECK (amount > 0),
     fee                     BIGINT NOT NULL DEFAULT 0 CHECK (fee >= 0),
     status_id               SMALLINT NOT NULL REFERENCES transfer_status(id),
     on_us                   BOOLEAN NOT NULL DEFAULT FALSE,
     -- destino interno (TEF e PIX on-us)
     destination_account_id  UUID REFERENCES account(id),
-    -- destino externo
+    -- destino externo (QI target_account)
     pix_key                 TEXT,
+    pix_key_inquiry_id      UUID UNIQUE,                 -- e2e da consulta: uso único
     destination_ispb        CHAR(8),
     destination_branch      TEXT,
     destination_account     TEXT,
+    destination_account_digit CHAR(1),
+    destination_account_type TEXT CHECK (destination_account_type IN ('CHECKING','SALARY','SAVINGS','PAYMENT')),
     destination_document    TEXT,
     destination_name        TEXT,
+    pix_message             VARCHAR(140),                -- QI: até 140, sem emoji (controller)
+    -- devolução de Pix RECEBIDO (QI: POST .../pix_transfer/{key}/reversal)
+    original_incoming_transfer_id UUID,                  -- FK no fim da seção (tabela circular)
+    reversal_reason         TEXT CHECK (reversal_reason IN ('CLIENT_REQUEST','RECONCILIATION')),
     -- trilho
-    end_to_end_id           TEXT UNIQUE,
+    end_to_end_id           TEXT UNIQUE,                 -- E… no Pix; D… na devolução
     str_control_number      TEXT UNIQUE,
     scheduled_for           DATE,
+    failure_code            VARCHAR(20),                 -- código do trilho (ex. PXT000132)
     failure_reason          TEXT,
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -366,17 +459,41 @@ CREATE TABLE transfer (
     CONSTRAINT ck_same_account CHECK (destination_account_id IS DISTINCT FROM source_account_id),
     CONSTRAINT ck_destination_by_method CHECK (
         (method = 'TEF' AND destination_account_id IS NOT NULL AND on_us)
-     OR (method = 'PIX' AND pix_key IS NOT NULL AND (on_us = (destination_account_id IS NOT NULL)))
+     OR (method = 'PIX' AND pix_transfer_type = 'KEY'
+            AND pix_key IS NOT NULL AND pix_key_inquiry_id IS NOT NULL AND end_to_end_id IS NOT NULL
+            AND on_us = (destination_account_id IS NOT NULL))
+     OR (method = 'PIX' AND pix_transfer_type = 'MANUAL'
+            AND destination_ispb IS NOT NULL AND destination_branch IS NOT NULL
+            AND destination_account IS NOT NULL AND destination_document IS NOT NULL
+            AND destination_name IS NOT NULL AND destination_account_type IS NOT NULL
+            AND on_us = (destination_account_id IS NOT NULL))
+     OR (method = 'PIX' AND pix_transfer_type = 'REVERSAL' AND NOT on_us
+            AND destination_ispb IS NOT NULL)
      OR (method = 'TED' AND destination_ispb IS NOT NULL AND destination_branch IS NOT NULL
-                        AND destination_account IS NOT NULL AND destination_document IS NOT NULL
-                        AND NOT on_us)),
-    CONSTRAINT ck_scheduled CHECK ((status_id = 2) <= (scheduled_for IS NOT NULL))  -- 2 = SCHEDULED
+            AND destination_account IS NOT NULL AND destination_document IS NOT NULL
+            AND destination_name IS NOT NULL AND destination_account_type IS NOT NULL
+            AND NOT on_us)),
+    CONSTRAINT ck_pix_type_by_method CHECK ((method = 'PIX') = (pix_transfer_type IS NOT NULL)),
+    CONSTRAINT ck_pix_message_only_pix CHECK (pix_message IS NULL OR method = 'PIX'),
+    -- Pix: E (pagamento) ou D (devolução) + ISPB + yyyyMMddHHmm + 11 alfanuméricos
+    CONSTRAINT ck_e2e_format CHECK (
+        end_to_end_id IS NULL OR end_to_end_id ~ '^[ED][0-9]{8}[0-9]{12}[A-Za-z0-9]{11}$'),
+    CONSTRAINT ck_reversal_link CHECK (
+        COALESCE(pix_transfer_type = 'REVERSAL', FALSE) = (original_incoming_transfer_id IS NOT NULL)
+        AND (original_incoming_transfer_id IS NOT NULL) = (reversal_reason IS NOT NULL)),
+    CONSTRAINT ck_scheduled CHECK ((status_id = 2) <= (scheduled_for IS NOT NULL)),  -- 2 = SCHEDULED
+    -- Pix por chave: o e2e tem de ser o da consulta, feita pela MESMA conta
+    CONSTRAINT fk_transfer_inquiry FOREIGN KEY (pix_key_inquiry_id, source_account_id, end_to_end_id)
+        REFERENCES pix_key_inquiry (id, account_id, end_to_end_id)
 );
 -- Limite noturno: soma das saídas da conta na janela 20h–6h
 CREATE INDEX ix_transfer_source_date ON transfer (source_account_id, created_at);
 -- Jobs: TED agendada e reconciliação SPI/STR
 CREATE INDEX ix_transfer_scheduled ON transfer (scheduled_for) WHERE status_id = 2;  -- SCHEDULED
 CREATE INDEX ix_transfer_sent      ON transfer (updated_at)    WHERE status_id = 3;  -- SENT
+-- Soma das devoluções ≤ valor recebido (QI PXT000017)
+CREATE INDEX ix_transfer_reversal ON transfer (original_incoming_transfer_id)
+    WHERE original_incoming_transfer_id IS NOT NULL;
  
 -- Histórico de status: uma linha por transição, append-only (trigger na seção 7).
 -- A coluna transfer.status_id é a verdade do agora; esta tabela é a verdade do que aconteceu.
@@ -391,46 +508,102 @@ CREATE TABLE transfer_status_event (
 );
 CREATE INDEX ix_transfer_status_event ON transfer_status_event (transfer_id, id);
  
-
--- Entradas via webhook SPI/STR (idempotência por id externo)
+-- 4d. Entradas via webhook SPI/STR (idempotência por id externo).
+--     QI incoming_pix: o tipo inclui "reversal", que aponta para o NOSSO
+--     Pix de saída que está sendo devolvido (original_outgoing_pix_transfer).
 CREATE TABLE incoming_transfer (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     rail                    TEXT NOT NULL CHECK (rail IN ('SPI','STR')),
+    pix_transfer_type       TEXT CHECK (pix_transfer_type IN
+                                ('KEY','MANUAL','STATIC_QR_CODE','DYNAMIC_QR_CODE','REVERSAL')),
     external_id             TEXT NOT NULL,
     destination_account_id  UUID REFERENCES account(id),
     amount                  BIGINT NOT NULL CHECK (amount > 0),
     sender_name             TEXT,
     sender_document         TEXT,
     sender_ispb             CHAR(8),
+    receiver_pix_key        VARCHAR(77),
+    pix_message             VARCHAR(140),
+    original_transfer_id    UUID REFERENCES transfer(id),
     status_id               SMALLINT NOT NULL REFERENCES incoming_transfer_status(id),  -- nasce final: sem eventos
     received_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (rail, external_id)
+    UNIQUE (rail, external_id),
+    CONSTRAINT ck_incoming_pix_type CHECK ((rail = 'SPI') = (pix_transfer_type IS NOT NULL)),
+    CONSTRAINT ck_incoming_reversal CHECK (
+        COALESCE(pix_transfer_type = 'REVERSAL', FALSE) = (original_transfer_id IS NOT NULL))
 );
+CREATE INDEX ix_incoming_original ON incoming_transfer (original_transfer_id)
+    WHERE original_transfer_id IS NOT NULL;
+ 
+ALTER TABLE transfer ADD CONSTRAINT fk_transfer_original_incoming
+    FOREIGN KEY (original_incoming_transfer_id) REFERENCES incoming_transfer(id);
  
 -- ---------------------------------------------------------------------
 -- 5. Cartões (débito e crédito)
 -- ---------------------------------------------------------------------
-CREATE TABLE card (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id          UUID NOT NULL REFERENCES account(id),
-    pan_token           TEXT NOT NULL UNIQUE,     -- nunca o PAN em claro (PCI DSS)
-    last4               CHAR(4) NOT NULL,
-    brand               TEXT NOT NULL,
-    functions           TEXT NOT NULL CHECK (functions IN ('DEBIT','CREDIT','MULTIPLE')),
-    status_id           SMALLINT NOT NULL REFERENCES card_status(id),
-    -- crédito (NULL se só débito)
-    total_limit         BIGINT CHECK (total_limit >= 0),
-    available_limit     BIGINT CHECK (available_limit >= 0),
-    closing_day         SMALLINT CHECK (closing_day BETWEEN 1 AND 28),
-    due_day             SMALLINT CHECK (due_day BETWEEN 1 AND 28),
-    autopay             BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ck_credit CHECK (
-        (functions = 'DEBIT' AND total_limit IS NULL)
-     OR (functions <> 'DEBIT' AND total_limit IS NOT NULL AND available_limit IS NOT NULL
-         AND closing_day IS NOT NULL AND due_day IS NOT NULL))
+-- 5a. Carteira de crédito (QI: wallet). "Uma carteira = uma fatura":
+--     limite, ciclo e encargos moram AQUI, não no cartão. O virtual, o
+--     físico e a reemissão consomem o MESMO limite e caem na MESMA fatura.
+--     Cartão só de débito não tem carteira: debita a conta, como o
+--     pré-pago da QI.
+CREATE TABLE credit_wallet (
+    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id             UUID NOT NULL REFERENCES account(id),
+    status_id              SMALLINT NOT NULL REFERENCES credit_wallet_status(id),
+    total_limit            BIGINT NOT NULL CHECK (total_limit >= 0),   -- informado pela IF
+    used_limit             BIGINT NOT NULL DEFAULT 0 CHECK (used_limit >= 0),
+    closing_day            SMALLINT NOT NULL CHECK (closing_day BETWEEN 1 AND 28),
+    due_day                SMALLINT NOT NULL CHECK (due_day BETWEEN 1 AND 28),
+    monthly_interest_rate  NUMERIC(7,6) NOT NULL CHECK (monthly_interest_rate >= 0),     -- rotativo
+    fine_rate              NUMERIC(5,4) NOT NULL CHECK (fine_rate BETWEEN 0 AND 0.02),   -- multa: teto CDC art. 52
+    autopay                BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ux_wallet_account UNIQUE (id, account_id)               -- alvo da FK composta do cartão
+    -- Sem CHECK used_limit <= total_limit: encargo do rotativo pode passar
+    -- do limite. "Novo limite >= usado" (QI CIN000110) é regra do controller.
 );
-
+-- Uma carteira viva por conta (QI CIN000043 "Active wallet found" → 409)
+CREATE UNIQUE INDEX ux_credit_wallet_live ON credit_wallet (account_id) WHERE status_id IN (1, 2);  -- ACTIVE, BLOCKED
+ 
+CREATE TABLE credit_wallet_status_event (
+    id                BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    credit_wallet_id  UUID     NOT NULL REFERENCES credit_wallet(id),
+    from_status_id    SMALLINT REFERENCES credit_wallet_status(id),       -- nulo ao nascer
+    to_status_id      SMALLINT NOT NULL REFERENCES credit_wallet_status(id),
+    reason            VARCHAR(255),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_credit_wallet_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
+);
+CREATE INDEX ix_credit_wallet_status_event ON credit_wallet_status_event (credit_wallet_id, id);
+ 
+-- 5b. O cartão é só o instrumento.
+CREATE TABLE card (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    account_id            UUID NOT NULL REFERENCES account(id),
+    wallet_id             UUID,                                 -- NULL se só débito
+    type                  TEXT NOT NULL CHECK (type IN ('VIRTUAL','PLASTIC')),
+    pan_token             TEXT NOT NULL UNIQUE,                 -- nunca o PAN em claro (PCI DSS)
+    last4                 CHAR(4) NOT NULL,
+    brand                 TEXT NOT NULL CHECK (brand IN ('VISA','MASTERCARD')),
+    functions             TEXT NOT NULL CHECK (functions IN ('DEBIT','CREDIT','MULTIPLE')),
+    card_name             VARCHAR(15),                          -- apelido (QI card_name)
+    printed_name          VARCHAR(26) NOT NULL,                 -- QI printed_name
+    contactless_enabled   BOOLEAN,                              -- só físico
+    activation_code_hash  CHAR(64),                             -- só físico; nunca o código em claro
+    status_id             SMALLINT NOT NULL REFERENCES card_status(id),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- a carteira é da MESMA conta do cartão
+    CONSTRAINT fk_card_wallet FOREIGN KEY (wallet_id, account_id) REFERENCES credit_wallet (id, account_id),
+    CONSTRAINT ck_card_wallet CHECK ((functions = 'DEBIT') = (wallet_id IS NULL)),
+    CONSTRAINT ck_card_plastic CHECK (
+        (type = 'PLASTIC') = (contactless_enabled IS NOT NULL)
+        AND (type = 'PLASTIC') = (activation_code_hash IS NOT NULL))
+);
+CREATE INDEX ix_card_account ON card (account_id);
+CREATE INDEX ix_card_wallet ON card (wallet_id) WHERE wallet_id IS NOT NULL;
+ 
 CREATE TABLE card_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     card_id         UUID     NOT NULL REFERENCES card(id),
@@ -442,65 +615,90 @@ CREATE TABLE card_status_event (
 );
 CREATE INDEX ix_card_status_event ON card_status_event (card_id, id);
  
-
--- Autorização = HOLD (débito) ou reserva de limite (crédito)
+-- 5c. Autorização = HOLD (débito) ou reserva de limite (crédito).
+--     O agregado guarda os totais correntes; cada movimento financeiro é
+--     uma linha em card_authorization_event (enumerador da QI, 1 para 1).
 CREATE TABLE card_authorization (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     authorization_id     TEXT NOT NULL UNIQUE,     -- id da rede: idempotência
     card_id              UUID NOT NULL REFERENCES card(id),
     account_id           UUID NOT NULL REFERENCES account(id),
     function             TEXT NOT NULL CHECK (function IN ('DEBIT','CREDIT')),
-    amount               BIGINT NOT NULL CHECK (amount > 0),
-    installment_count    SMALLINT NOT NULL DEFAULT 1 CHECK (installment_count >= 1),
+    amount               BIGINT NOT NULL CHECK (amount > 0),          -- valor ORIGINAL pedido
+    authorized_amount    BIGINT NOT NULL CHECK (authorized_amount >= 0),  -- após incrementais e reversões
+    captured_amount      BIGINT NOT NULL DEFAULT 0 CHECK (captured_amount >= 0),
+    refunded_amount      BIGINT NOT NULL DEFAULT 0 CHECK (refunded_amount >= 0),
+    installment_count    SMALLINT NOT NULL DEFAULT 1 CHECK (installment_count BETWEEN 1 AND 24),
     merchant_name        TEXT,
     mcc                  CHAR(4),
     status_id            SMALLINT NOT NULL REFERENCES card_authorization_status(id),
-    response_code        CHAR(2) NOT NULL,         -- '00' aprovada · '51' saldo/limite
+    response_code        CHAR(2) NOT NULL,         -- ISO 8583: '00' aprovada · '51' saldo/limite …
+    denial_reason        TEXT CHECK (denial_reason IN (
+                             'INSUFFICIENT_FUNDS','INSUFFICIENT_LIMIT','CARD_NOT_ACTIVE',
+                             'ACCOUNT_NOT_ACTIVE','WALLET_NOT_ACTIVE','FUNCTION_NOT_SUPPORTED',
+                             'FRAUD_SUSPICION')),
     approval_code        CHAR(6),
     expires_at           TIMESTAMPTZ,
     response_payload     JSONB NOT NULL,           -- replay idêntico em reenvio
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_refund_le_capture CHECK (refunded_amount <= captured_amount),
+    CONSTRAINT ck_declined_reason CHECK ((status_id = 2) = (denial_reason IS NOT NULL)),  -- 2 = DECLINED
+    CONSTRAINT ck_installments_credit CHECK (installment_count = 1 OR function = 'CREDIT')
 );
 -- Job de expiração de HOLD/reserva
 CREATE INDEX ix_card_auth_expiry ON card_authorization (expires_at) WHERE status_id = 1;  -- APPROVED
+CREATE INDEX ix_card_auth_card ON card_authorization (card_id, created_at);
  
-
-CREATE TABLE card_capture (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    capture_id             TEXT NOT NULL UNIQUE,
-    card_authorization_id  UUID NOT NULL REFERENCES card_authorization(id),
-    amount                 BIGINT NOT NULL CHECK (amount > 0),   -- pode ≠ valor autorizado
-    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE card_authorization_status_event (
+    id                     BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    card_authorization_id  UUID     NOT NULL REFERENCES card_authorization(id),
+    from_status_id         SMALLINT REFERENCES card_authorization_status(id),   -- nulo ao nascer
+    to_status_id           SMALLINT NOT NULL REFERENCES card_authorization_status(id),
+    reason                 VARCHAR(255),
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_card_authorization_status_event_changed CHECK (from_status_id IS DISTINCT FROM to_status_id)
 );
-
-CREATE TABLE card_refund (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    refund_id              TEXT NOT NULL UNIQUE,
-    card_authorization_id  UUID NOT NULL REFERENCES card_authorization(id),
+CREATE INDEX ix_card_authorization_status_event ON card_authorization_status_event (card_authorization_id, id);
+ 
+-- Movimentos financeiros da autorização. Substitui card_capture e
+-- card_refund: captura e estorno viraram TIPOS de evento, ao lado de
+-- incremental, reversão parcial e expiração, que antes não existiam.
+CREATE TABLE card_authorization_event (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    card_authorization_id  UUID   NOT NULL REFERENCES card_authorization(id),
+    type                   TEXT   NOT NULL CHECK (type IN (
+                               'AUTHORIZATION','INCREMENTAL_AUTHORIZATION',
+                               'REVERSAL','PARTIAL_REVERSAL','EXPIRATION',
+                               'CAPTURE','REFUND','PARTIAL_REFUND')),
     amount                 BIGINT NOT NULL CHECK (amount > 0),
+    external_id            TEXT,      -- id da rede (capture_id, refund_id…): idempotência
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
--- Fatura do cartão de crédito
+CREATE UNIQUE INDEX ux_card_auth_event_external ON card_authorization_event (type, external_id)
+    WHERE external_id IS NOT NULL;
+CREATE INDEX ix_card_auth_event ON card_authorization_event (card_authorization_id, id);
+ 
+-- 5d. Fatura: da CARTEIRA, não do cartão.
 CREATE TABLE invoice (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    card_id                 UUID NOT NULL REFERENCES card(id),
-    reference_month         DATE NOT NULL,              -- 1º dia do mês
+    wallet_id               UUID NOT NULL REFERENCES credit_wallet(id),
+    reference_month         DATE NOT NULL,              -- 1º dia do mês do fechamento
     status_id               SMALLINT NOT NULL REFERENCES invoice_status(id),
     closing_date            DATE NOT NULL,
     due_date                DATE NOT NULL,              -- ajustada a dia útil
     total_amount            BIGINT NOT NULL DEFAULT 0,
     paid_amount             BIGINT NOT NULL DEFAULT 0 CHECK (paid_amount >= 0),
     original_debt_amount    BIGINT,                     -- base do teto do rotativo
-    UNIQUE (card_id, reference_month),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ux_invoice_wallet_month UNIQUE (wallet_id, reference_month),
     CONSTRAINT ck_dates CHECK (due_date > closing_date)
 );
-CREATE UNIQUE INDEX ux_invoice_open ON invoice (card_id) WHERE status_id = 1;          -- OPEN
+CREATE UNIQUE INDEX ux_invoice_open ON invoice (wallet_id) WHERE status_id = 1;          -- OPEN
 CREATE INDEX ix_invoice_closing ON invoice (closing_date) WHERE status_id = 1;           -- OPEN
 CREATE INDEX ix_invoice_due     ON invoice (due_date)     WHERE status_id IN (2, 3);     -- CLOSED, PARTIALLY_PAID
-
-
+ 
 CREATE TABLE invoice_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     invoice_id      UUID     NOT NULL REFERENCES invoice(id),
@@ -512,7 +710,6 @@ CREATE TABLE invoice_status_event (
 );
 CREATE INDEX ix_invoice_status_event ON invoice_status_event (invoice_id, id);
  
-
 CREATE TABLE invoice_item (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     invoice_id             UUID NOT NULL REFERENCES invoice(id),
@@ -522,10 +719,11 @@ CREATE TABLE invoice_item (
     installment_number     SMALLINT NOT NULL DEFAULT 1,
     installment_total      SMALLINT NOT NULL DEFAULT 1,
     description            TEXT,
-    created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT ck_installment_range CHECK (installment_number BETWEEN 1 AND installment_total)
 );
 CREATE INDEX ix_invoice_item ON invoice_item (invoice_id);
-
+ 
 CREATE TABLE invoice_payment (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     invoice_id       UUID NOT NULL REFERENCES invoice(id),
@@ -544,7 +742,7 @@ CREATE UNIQUE INDEX ux_invoice_payment_autopay ON invoice_payment (invoice_id) W
 -- ---------------------------------------------------------------------
 CREATE TABLE outbox_event (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    type            TEXT NOT NULL,   -- ACCOUNT_STATUS_CHANGED, TRANSFER_COMPLETED, INCOMING_TRANSFER_CREDITED, ...
+    type            TEXT NOT NULL,   -- webhook_type no padrão QI: baas.pix_transfer.outgoing_pix, baas.card.status_change, ...
     aggregate_type  TEXT NOT NULL,
     aggregate_id    UUID NOT NULL,
     payload         JSONB NOT NULL,
@@ -609,13 +807,17 @@ BEGIN
         'card_authorization_status', 'invoice_status', 'outbox_event_status',
         'account_status_event', 'loan_status_event', 'installment_status_event',
         'transfer_status_event', 'card_status_event',
-        'card_authorization_status_event', 'invoice_status_event']
+        'card_authorization_status_event', 'invoice_status_event',
+        'pix_key_status', 'pix_key_status_event', 'pix_key_inquiry',
+        'credit_wallet_status', 'credit_wallet_status_event',
+        'card_authorization_event']
     LOOP
         EXECUTE 'CREATE TRIGGER ' || quote_ident('tg_' || t || '_append_only')
              || ' BEFORE UPDATE OR DELETE ON ' || quote_ident(t)
              || ' FOR EACH ROW EXECUTE FUNCTION fn_append_only()';
     END LOOP;
 END $$;
+ 
  
 -- ---------------------------------------------------------------------
 -- 8. Views de apoio

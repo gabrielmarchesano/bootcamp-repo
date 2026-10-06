@@ -33,3 +33,11 @@ class TransferResource:
         transfer = controller.get_by_id(transfer_id)
 
         return JSONResponse(content=jsonable_encoder(transfer), status_code=http_status.HTTP_200_OK)
+
+    def on_patch_cancel(self, transfer_id: str) -> JSONResponse:
+        """SCHEDULED → CANCELED. Qualquer outro status: 409."""
+        controller = TransferController()
+        transfer = controller.cancel(transfer_id)
+ 
+        return JSONResponse(content=jsonable_encoder(transfer), status_code=http_status.HTTP_200_OK)
+ 

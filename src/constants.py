@@ -38,6 +38,10 @@ BYPASS_ENDPOINTS = [
 
 REQUIRED_VARIABLES = ["DATABASE_URL", "INTERNAL_TOKEN"]
 
+# ISPB desta instituição (fictício). É o que vai no end_to_end_id dos Pix
+# que saem daqui e o que o DICT mock devolve para as chaves da casa.
+OWN_ISPB = "13370001"
+
 
 def check_variables():
     missing = []

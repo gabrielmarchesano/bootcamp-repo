@@ -18,6 +18,14 @@ class WebhookResource:
     @SchemaHandler.validate("post_webhook_spi.json")
     def on_post_spi(self, payload: dict) -> JSONResponse:
         controller = WebhookController()
-        result = controller.spi_received(payload)
+        result = controller.spi(payload)
 
         return JSONResponse(content=jsonable_encoder(result), status_code=http_status.HTTP_200_OK)
+
+    @SchemaHandler.validate("post_webhook_str.json")
+    def on_post_str(self, payload: dict) -> JSONResponse:
+        controller = WebhookController()
+        result = controller.str_(payload)
+ 
+        return JSONResponse(content=jsonable_encoder(result), status_code=http_status.HTTP_200_OK)
+ 

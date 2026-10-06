@@ -2,3 +2,8 @@ from controllers.customer_controller import CustomerController
 from controllers.account_controller import AccountController
 from controllers.transfer_controller import TransferController
 from controllers.webhook_controller import WebhookController
+from controllers.pix_key_controller import PixKeyController
+from controllers.credit_wallet_controller import CreditWalletController
+from controllers.card_controller import CardController
+from controllers.card_authorization_controller import CardAuthorizationController
+ 

@@ -1,6 +1,6 @@
 {
   "title": "PostTransfer",
-  "description": "Sprint 2a: só TEF (entre contas deste banco). PIX e TED entram no sprint 2b, no mesmo endereço.",
+  "description": "TEF (entre contas deste banco). Pix e TED têm rotas próprias por trilho, aninhadas na conta, como na QI.",
   "type": "object",
   "properties": {
     "source_account_id": {

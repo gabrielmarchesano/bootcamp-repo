@@ -1,30 +1,74 @@
 from typing import Tuple
+from datetime import date, datetime, time, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
 
 from controllers.base_controller import BaseController
 from dtos import TransferDTO
+from constants import OWN_ISPB
 from errors import (
     AccountNotActive,
     AccountNotFound,
+    EndToEndIdAlreadyUsed,
     IdempotencyConflict,
     IdempotencyKeyRequired,
+    IncomingTransferNotFound,
+    IncomingTransferNotReversible,
     InsufficientBalance,
     InvalidParameter,
+    InvalidPixMessage,
+    InvalidScheduleDate,
+    InvalidTargetAccount,
     NightLimitExceeded,
+    PixKeyInquiryExpired,
+    PixKeyInquiryNotFound,
+    PixKeyMismatch,
+    ReversalExceedsReceived,
+    ReversalWindowExpired,
     SameAccountTransfer,
+    TedOutsideWindow,
+    TransferCannotBeCanceled,
     TransferNotFound,
 )
-from models import Account, AccountStatus, LedgerEntry, OutboxEvent, Transfer
-from repositories import AccountRepository, LedgerLeg, LedgerRepository, OutboxRepository, TransferRepository
+from models import (
+    Account,
+    AccountStatus,
+    IncomingTransfer,
+    IncomingTransferStatus,
+    LedgerEntry,
+    OutboxEvent,
+    Transfer,
+    TransferStatus,
+)
+
+from repositories import (
+    AccountRepository,
+    CalendarRepository,
+    IncomingTransferRepository,
+    LedgerLeg,
+    LedgerRepository,
+    OutboxRepository,
+    PixKeyRepository,
+    TransferRepository,
+)
 from utils.cursor import decode_cursor, encode_cursor
 from utils.db_retry import retry_on_deadlock
 from utils.idempotency import is_valid_idempotency_key, request_hash
 from utils.ids import parse_uuid
 from utils.night_window import night_window_start
+from utils.pix import REVERSAL_PREFIX, generate_end_to_end_id, has_emoji
 
-# Teto da janela noturna (20h–6h), em centavos: R$ 1.000,00.
-NIGHT_LIMIT = 100_000
+# Janela da TED (STR): dia útil, das 6h30 às 17h, horário de Brasília.
+TED_WINDOW_START = time(6, 30)
+TED_WINDOW_END = time(17, 0)
+ 
+# Devolução de Pix recebido: até 90 dias depois do recebimento (QI PXT000015).
+REVERSAL_WINDOW_DAYS = 90
+ 
+# Status em que a conta de destino ainda recebe (mesma regra do webhook do SPI).
+CAN_RECEIVE = (AccountStatus.ACTIVE, AccountStatus.BLOCKED)
+ 
 
 
 class TransferController(BaseController):
