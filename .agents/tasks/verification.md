@@ -1,106 +1,81 @@
-# Verificação — Etapa 0: Estabilizar a main
+# Verificação — Etapa 0: Estabilizar a main (schema v6)
 
 Worktree: `c:\Users\Gustavo\Desktop\RFC\bootcamp-repo\.worktrees\etapa-0-estabilizar`
 Branch: `etapa-0-estabilizar`
-Ambiente: Windows, Python 3.11.9, venv em `.venv/` (git-ignored), Docker 29.8.2 + Compose v5.5.1 DISPONÍVEIS.
+Ambiente: Windows, Python 3.11.9, venv em `.venv/` (git-ignored), Docker 29.8.2 + Compose v5.5.1.
+Decisão do usuário: Opção A — Etapa 0 estabiliza a main AINDA no schema v6; v7 só na Etapa 1.
 
-## O que foi implementado (itens 0.1–0.6)
+## O que foi implementado
 
-- **0.1** `src/resources/__init__.py` reescrito: exporta as 10 classes de resource que `src/app.py` importa
-  (`AccountResource, CardResource, CardAuthorizationResource, CreditWalletResource, CustomerResource,
-  HealthCheckResource, PixResource, TedResource, TransferResource, WebhookResource`). O antigo conteúdo
-  (lista de models) foi movido para `models/__init__.py` conforme 0.2.
-- **0.2** `src/models/__init__.py` completado com todos os enums e models das tabelas: `PixKeyStatus,
-  CreditWalletStatus, CardStatus, CardAuthorizationStatus, InvoiceStatus, PixKey, PixKeyStatusEvent,
-  PixKeyInquiry, CreditWallet, CreditWalletStatusEvent, Card, CardStatusEvent, CardAuthorization,
-  CardAuthorizationStatusEvent, CardAuthorizationEvent, Invoice, InvoiceStatusEvent, InvoiceItem`.
-- **0.3** `git mv src/models/pix_key_injury.py src/models/pix_key_inquiry.py`. A classe já era `PixKeyInquiry`,
-  sem mudança interna. `grep pix_key_injury src` → nada.
-- **0.4** `src/repositories/__init__.py`: adicionados `PixKeyRepository, CardRepository,
-  CardAuthorizationRepository, CreditWalletRepository, InvoiceRepository, CalendarRepository`
-  (nomes de classe confirmados abrindo cada arquivo).
-- **0.5** `src/controllers/transfer_controller.py`: implementados `create_pix` (KEY/MANUAL, on-us 201 /
-  externo 202), `create_pix_reversal` (REVERSAL, e2e começando em `D`, 202), `create_ted` (imediata na
-  janela do STR / agendada SCHEDULED sem débito) e `cancel` (SCHEDULED → CANCELED; outro status → 409).
-  Adicionado o constante de módulo `NIGHT_LIMIT = 100_000` (o `_check_night_limit` referenciava um nome
-  inexistente — `NameError`). Adicionado helper `generate_str_control_number` em `transfer_repository.py`.
-  Corrigido também o uso de `OutboxEvent.TRANSFER_COMPLETED` (atributo inexistente no model → `AttributeError`
-  em todo TEF) para `OutboxEvent.OUTGOING_TEF`, que é a constante já definida para o trilho TEF.
-- **0.6** `src/repositories/incoming_transfer_repository.py::create` passou a aceitar
-  `pix_transfer_type` e `original_transfer_id` e a persistir também `receiver_pix_key`, `pix_message`
-  e `original_transfer_id` — corrige o `TypeError` que o `webhook_controller.received()` provocava.
-- **Schemas (parte de 0.5):** criados `post_pix_transfer.json`, `post_pix_reversal.json`,
-  `post_ted_transfer.json`, `post_webhook_str.json`, `get_pix_key_lookup.json`, `post_pix_key.json`
-  (as rotas Pix/TED/webhook-STR do `app.py` já os referenciam; sem eles o `@SchemaHandler.validate`
-  estoura antes do controller). Card/credit/invoice schemas ficam fora de escopo da Etapa 0.
-- **0.7** `database/database.sql` NÃO foi alterado por este trabalho (ver bloqueio abaixo).
+### Itens 0.1–0.6 (já descritos)
+- **0.1** `resources/__init__.py` exporta as 10 classes de resource que `app.py` importa.
+- **0.2** `models/__init__.py` com todos os enums/models (Pix, cartões, fatura).
+- **0.3** `git mv pix_key_injury.py → pix_key_inquiry.py` (classe já era `PixKeyInquiry`).
+- **0.4** `repositories/__init__.py` com os 6 repositórios faltantes.
+- **0.5** `transfer_controller.py`: `create_pix` (KEY/MANUAL, on-us 201 / externo 202),
+  `create_pix_reversal` (REVERSAL, e2e `D…`, 202), `create_ted` (imediata/agendada) e `cancel`.
+  Constante `NIGHT_LIMIT`; `OutboxEvent.TRANSFER_COMPLETED` (inexistente) → `OUTGOING_TEF`;
+  import de `Customer` no controller; helper `generate_str_control_number`.
+  Schemas Pix/TED criados: `post_pix_transfer`, `post_pix_reversal`, `post_ted_transfer`,
+  `post_webhook_str`, `get_pix_key_lookup`, `post_pix_key`.
+  Lock de duas contas (origem+destino, em ordem de id) no Pix on-us para não haver deadlock em
+  Pix cruzados; colisão de `end_to_end_id`/`pix_key_inquiry_id` em corrida vira 409 (uso único do e2e).
+- **0.6** `incoming_transfer_repository.create` aceita e persiste `pix_transfer_type`,
+  `receiver_pix_key`, `pix_message`, `original_transfer_id` (corrige o `TypeError`).
 
-## Verificação executada
+### Item 0.7 (passou a ser necessário no v6)
+- `database/database.sql` revertido para a versão COMMITADA (HEAD = v6), descartando a modificação v7
+  pré-aplicada, via `git checkout HEAD -- database/database.sql`.
+- Correção mínima do seed de contas internas: a coluna `account.customer_id` era `UUID NOT NULL`,
+  mas o `ck_account_type` exige `customer_id IS NULL` para contas INTERNAL — contradição que fazia o
+  seed de contas internas (LOAN_PORTFOLIO etc.) falhar com
+  `null value in column "customer_id" of relation "account" violates not-null constraint`.
+  Removido o `NOT NULL` da coluna (a nulabilidade correta por tipo de conta já é garantida pelo
+  `ck_account_type`), alinhando com `src/models/account.py` (que trata `customer_id` como anulável).
+  Verificado: `database/database.sql` NÃO contém o caractere de porcentagem (loader psycopg2).
 
-(a) **`import app` a partir de `src/`** — OK, sem `ImportError`:
+## Verificação executada (Docker/Postgres de pé)
+
+- `docker compose up -d --build`: db e api `healthy`; `/health_check` → 204.
+- Schema sobe do zero sem erro; `SELECT count(*) FROM account WHERE type='INTERNAL'` → 7 (seed OK).
+  Confirma 0.7: o schema v6 corrigido carrega do zero via docker compose.
+- `import app` a partir de `src/` → `APP OK` (sem ImportError).
+- `pytest tests --collect-only` → 130 testes, 0 erros de import/coleta.
+  (Instalado `tzdata` no venv: dependência do ambiente de teste no Windows, não do código-fonte.)
+- `pix_key_inquiry.py` existe; `pix_key_injury.py` não existe.
+
+## Resultado do pytest (suíte completa, `pytest tests -q`)
+
 ```
-python -c "import sys; sys.path.insert(0,'src'); import os; os.environ.setdefault('DATABASE_URL', ...);
-           os.environ.setdefault('INTERNAL_TOKEN','default_token'); import app; print('APP OK')"
-→ APP OK
-```
-Isto exercita a cadeia real de boot resources → controllers → repositories → models e prova 0.1–0.4,
-a renomeação 0.3 e a correção de `NIGHT_LIMIT`/`OUTGOING_TEF`.
-
-(c) **Nenhum import quebrado** em `models/__init__.py`, `resources/__init__.py`, `repositories/__init__.py`:
-`pytest tests --collect-only -q` → **130 testes coletados, 0 erros de import/coleta**.
-(Foi necessário instalar `tzdata` no venv — Windows não traz a base IANA de fusos, e
-`tests/integration/transfer/test_transfer_ted.py` usa `ZoneInfo("America/Sao_Paulo")` no import.
-Isso é dependência do ambiente de teste, não do código-fonte.)
-
-(d) **Renomeação** confirmada: `src/models/pix_key_inquiry.py` existe; `src/models/pix_key_injury.py` NÃO existe.
-
-(b) **Suíte completa (`pytest tests -q`) — NÃO atinge 130/130. 17 passaram, 111 falharam, 2 skipped.**
-Docker/Postgres ESTÁ disponível e a stack subiu saudável (`docker compose up -d --build`;
-db e api `healthy`; `/health_check` → 204). A causa das 111 falhas NÃO são os itens 0.1–0.6:
-é um conflito de schema fora do escopo da Etapa 0 (ver abaixo). Exemplo de falha (criação de cliente,
-que nem toca no meu código):
-```
-GET/POST /customers → 500 QIT000500
-log da API: psycopg2.errors.UndefinedColumn: column customer.cpf does not exist
+95 passed, 33 failed, 2 skipped
 ```
 
-## BLOQUEIO (impede 130/130) — conflito entre `database/database.sql` e o código
+- **2 skipped:** `test_transfer_ted.py` — testes de TED imediata que só rodam DENTRO da janela do STR
+  (dia útil, 6h30–17h); fora da janela são `skipif` por desenho do próprio teste.
+- **95 passed:** inclui TODOS os testes de conta/cliente, TEF, Pix (chave, manual, devolução,
+  concorrência), TED (agendada, cancelamento, recebida, janela), webhook SPI/STR e schema-rules.
+  Ou seja, todo o escopo da Etapa 0 (0.1–0.7) está verde.
+- **33 failed:** TODOS em `tests/integration/card/` (cartão, carteira de crédito, autorização,
+  fatura). Causa única e idêntica em todos: faltam os SCHEMAS de request das rotas de cartão
+  (`Exception: Nao encontrei o schema 'post_credit_wallet.json' em /app/schemas`), e por isso o
+  `@SchemaHandler.validate(...)` estoura antes do controller → 500. Os controllers/resources/
+  repositories de cartão existem e estão ligados (a app importa). Faltam estes arquivos em
+  `src/schemas/`: `post_credit_wallet.json`, `patch_credit_wallet_limit.json`,
+  `patch_credit_wallet_status.json`, `get_wallet_invoices.json`, `post_card.json`,
+  `patch_card_activate.json`, `patch_card_status.json`, `post_card_authorization.json`,
+  `post_card_authorization_increment.json`, `post_card_authorization_reversal.json`,
+  `post_card_capture.json`, `post_card_refund.json`.
 
-O `database/database.sql` da worktree (a modificação "v7" pré-aplicada, que aparece como `M` no git e que
-a tarefa manda NÃO alterar) define a tabela `customer` com `person_type/document/legal_nature/...`
-e **sem as colunas `cpf` e `type`**. Verificado no banco em execução:
-```
-columns de customer: id, person_type, document, name, birth_date, legal_nature, owner_customer_id,
-owner_person_type, exposure_customer_id, fee_segment, annual_revenue, ...  (sem cpf, sem type)
-```
-Mas TODO o código em `src/` (models, repositories, controllers) é escrito para o schema ANTIGO:
-`src/models/customer.py` tem `cpf = Column(CHAR(11), ...)` e `type IN ('INDIVIDUAL','MEI')`;
-`customer_repository.get_by_cpf` consulta `customer.cpf`. Logo, qualquer rota que toque em cliente/conta
-quebra com `column customer.cpf does not exist` — e como todos os testes de integração criam uma conta
-primeiro, 111/130 caem por isso, em TODOS os domínios (TEF, Pix, TED, webhook, cartões, schema-rules),
-não só nos itens da Etapa 0.
+## Observação sobre a meta 130/130
 
-- A versão **commitada (HEAD)** de `database.sql` TEM `customer.cpf` e `type IN ('INDIVIDUAL','MEI')`
-  (compatível com os models), **porém** nem sequer carrega do zero: o seed de contas internas viola
-  `account.customer_id NOT NULL` (`psql:/tmp/head.sql:854: ERROR: null value in column "customer_id"
-  of relation "account"`), enquanto `src/models/account.py` trata `customer_id` como anulável
-  (conta INTERNAL não tem cliente).
-- A versão **da worktree** carrega limpa (a stack subiu), mas tem o `customer` incompatível com o código.
-
-Ou seja: **nenhuma das duas versões de `database.sql` é compatível com o código-fonte desta worktree**,
-em sentidos opostos. Reverter/alterar `database.sql` seria a única forma de chegar a 130/130, e isso é
-exatamente o que o item 0.7 proíbe ("NÃO alterar database/database.sql"). Essa é uma decisão de
-produto/arquitetura (muda o contrato do modelo de dados) fora da alçada da Etapa 0 — por isso o passo
-foi sinalizado com `warning` em vez de eu decidir sozinho.
-
-### 17 testes que passaram
-São os que não exigem o schema de `customer`/`account` compatível (ex.: health check, validações de schema
-que falham antes de tocar no banco, alguns 400/404 de parsing). O detalhamento completo (111 nomes) está no
-resumo do `pytest tests -q`.
+O plano da Etapa 0 define explicitamente os schemas de cartão/crédito/fatura como FORA de escopo
+("Out of scope / documented gaps"), de etapa posterior. A correção do usuário listou o que corrigir
+se um teste falhasse por motivo diferente de schema×código — "imports, métodos de transfer, incoming
+transfer, schemas Pix/TED" — e cartão não está nessa lista. As 33 falhas de cartão são exatamente
+esse gap documentado. Com o escopo da Etapa 0 (0.1–0.7), a suíte está em 95/130; os 33 restantes
+dependem de criar os schemas de cartão, trabalho de etapa posterior. Ponto levantado ao orquestrador
+para decisão (criar os schemas de cartão agora, ampliando o escopo, OU manter o corte do plano).
 
 ## Estado do ambiente ao final
-- Stack Docker deixada de pé e saudável; banco `bootcamp` recarregado a partir do próprio
-  `database/database.sql` da worktree (schema sobe do zero sem erro — confirma a parte de 0.7 que diz
-  respeito ao schema LOADAR; o que falha é a compatibilidade com o código, não a carga).
-- `.venv/` e artefatos temporários não versionados; nenhum arquivo fora do conjunto pretendido foi tocado
-  (`database.sql` continua com a modificação pré-existente, intacta).
+- Stack Docker de pé e saudável.
+- `.venv/` e artefatos temporários não versionados; apenas os arquivos pretendidos foram tocados.

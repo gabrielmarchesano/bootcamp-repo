@@ -39,7 +39,39 @@
           "enum": ["MANUAL"]
         },
         "target_account": {
-          "$ref": "#/definitions/target_account"
+          "type": "object",
+          "properties": {
+            "ispb": {
+              "type": "string",
+              "pattern": "^\\d{8}$"
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^\\d{1,4}$"
+            },
+            "number": {
+              "type": "string",
+              "pattern": "^\\d{1,20}$"
+            },
+            "digit": {
+              "type": "string",
+              "pattern": "^\\d$"
+            },
+            "document": {
+              "type": "string",
+              "pattern": "^(\\d{11}|\\d{14})$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "account_type": {
+              "enum": ["CHECKING", "SALARY", "SAVINGS", "PAYMENT"]
+            }
+          },
+          "required": ["ispb", "branch", "number", "document", "name", "account_type"],
+          "additionalProperties": false
         },
         "amount": {
           "type": "integer",
@@ -54,42 +86,5 @@
       "required": ["pix_transfer_type", "target_account", "amount"],
       "additionalProperties": false
     }
-  ],
-  "definitions": {
-    "target_account": {
-      "type": "object",
-      "properties": {
-        "ispb": {
-          "type": "string",
-          "pattern": "^\\d{8}$"
-        },
-        "branch": {
-          "type": "string",
-          "pattern": "^\\d{1,4}$"
-        },
-        "number": {
-          "type": "string",
-          "pattern": "^\\d{1,20}$"
-        },
-        "digit": {
-          "type": "string",
-          "pattern": "^\\d$"
-        },
-        "document": {
-          "type": "string",
-          "pattern": "^(\\d{11}|\\d{14})$"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 255
-        },
-        "account_type": {
-          "enum": ["CHECKING", "SALARY", "SAVINGS", "PAYMENT"]
-        }
-      },
-      "required": ["ispb", "branch", "number", "document", "name", "account_type"],
-      "additionalProperties": false
-    }
-  }
+  ]
 }

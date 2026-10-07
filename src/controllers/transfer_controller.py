@@ -34,6 +34,7 @@ from errors import (
 from models import (
     Account,
     AccountStatus,
+    Customer,
     IncomingTransfer,
     IncomingTransferStatus,
     LedgerEntry,
@@ -279,23 +280,41 @@ class TransferController(BaseController):
         if replay is not None:
             return replay, False
 
-        source = self._lock_active_source(raw_account_id)
+        pix_message = payload.get("pix_message")
+        if has_emoji(pix_message):
+            raise InvalidPixMessage()
+
+        # Resolve origem e destino SEM lock para descobrir se é on-us; só então
+        # trava as duas contas de uma vez, em ordem de id (igual à TEF), para
+        # que dois Pix cruzados (A→B e B→A) não travem em sentidos opostos.
+        source_id = parse_uuid(raw_account_id)
+        if source_id is None:
+            raise AccountNotFound(raw_account_id)
+
+        if payload["pix_transfer_type"] == Transfer.PIX_KEY:
+            resolved = self._pix_key_fields(source_id, payload)
+        else:
+            resolved = self._pix_manual_fields(source_id, payload)
+
+        destination_id = resolved.get("destination_account_id")
+        lock_ids = [source_id] if destination_id is None else [source_id, destination_id]
+        locked = self.account_repository.lock_customer_accounts(lock_ids)
 
         replay = self._find_replay(idempotency_key, payload_hash)
         if replay is not None:
             return replay, False
 
+        source = locked.get(source_id)
+        if source is None:
+            raise AccountNotFound(raw_account_id)
+
+        if source.status.enumerator != AccountStatus.ACTIVE:
+            raise AccountNotActive(source.id, source.status.enumerator)
+
+        destination = locked.get(destination_id) if destination_id is not None else None
+
         amount = payload["amount"]
-        pix_message = payload.get("pix_message")
-        if has_emoji(pix_message):
-            raise InvalidPixMessage()
-
-        if payload["pix_transfer_type"] == Transfer.PIX_KEY:
-            fields = self._pix_key_fields(source, payload)
-        else:
-            fields = self._pix_manual_fields(source, payload)
-
-        destination = fields.get("destination")
+        fields = {"columns": resolved["columns"]}
         on_us = destination is not None
         fee = self.transfer_repository.current_fee(Transfer.PIX, source.customer.type)
 
@@ -325,6 +344,11 @@ class TransferController(BaseController):
             replay = self._find_replay(idempotency_key, payload_hash)
             if replay is not None:
                 return replay, False
+            # Dois Pix por chave disputando o mesmo e2e/consulta: um grava, o
+            # outro bate no UNIQUE (end_to_end_id / pix_key_inquiry_id). O e2e
+            # é de uso único, então a corrida perdedora é 409, não 500.
+            if payload["pix_transfer_type"] == Transfer.PIX_KEY:
+                raise EndToEndIdAlreadyUsed(payload["end_to_end_id"])
             raise
 
         legs = [LedgerLeg(source, -amount, LedgerEntry.PIX_SENT, Transfer.PIX, transfer.end_to_end_id)]
@@ -545,10 +569,15 @@ class TransferController(BaseController):
 
         return source
 
-    def _pix_key_fields(self, source: Account, payload: dict) -> dict:
-        """Colunas e destino de um Pix por chave, a partir da consulta ao DICT."""
+    def _pix_key_fields(self, source_id, payload: dict) -> dict:
+        """Colunas e destino de um Pix por chave, a partir da consulta ao DICT.
+
+        Resolve SEM lock (a leitura é só para descobrir o destino e validar o
+        e2e). Devolve o `destination_account_id` quando o Pix é on-us; quem
+        trava as contas é o `create_pix`.
+        """
         end_to_end_id = payload["end_to_end_id"]
-        inquiry = self.pix_key_repository.get_inquiry(source.id, end_to_end_id)
+        inquiry = self.pix_key_repository.get_inquiry(source_id, end_to_end_id)
 
         if inquiry is None:
             raise PixKeyInquiryNotFound(end_to_end_id)
@@ -566,7 +595,6 @@ class TransferController(BaseController):
         if self.transfer_repository.get_by_end_to_end_id(end_to_end_id) is not None:
             raise EndToEndIdAlreadyUsed(end_to_end_id)
 
-        destination = None
         columns = {
             "pix_transfer_type": Transfer.PIX_KEY,
             "pix_key": inquiry.pix_key,
@@ -575,20 +603,22 @@ class TransferController(BaseController):
             "destination_ispb": inquiry.ispb,
         }
 
-        if inquiry.destination_account_id is not None:
-            destination = self.account_repository.get_customer_account(inquiry.destination_account_id)
+        destination_account_id = inquiry.destination_account_id
+        if destination_account_id is not None:
+            columns["destination_account_id"] = destination_account_id
 
-        if destination is not None:
-            columns["destination_account_id"] = destination.id
+        return {"columns": columns, "destination_account_id": destination_account_id}
 
-        return {"columns": columns, "destination": destination}
+    def _pix_manual_fields(self, source_id, payload: dict) -> dict:
+        """Colunas e destino de um Pix manual (QI target_account).
 
-    def _pix_manual_fields(self, source: Account, payload: dict) -> dict:
-        """Colunas e destino de um Pix manual (QI target_account)."""
+        Resolve SEM lock; devolve o `destination_account_id` quando bate numa
+        conta nossa (on-us). Quem trava as contas é o `create_pix`.
+        """
         target = payload["target_account"]
         destination = self.account_repository.get_customer_account_by_number(target["branch"], target["number"])
 
-        if destination is not None and destination.id != source.id:
+        if destination is not None and destination.id != source_id:
             holder = destination.customer
             holder_document = holder.cnpj if holder.type == Customer.MEI else holder.cpf
             if target["document"] != holder_document:
@@ -608,10 +638,11 @@ class TransferController(BaseController):
             "destination_name": target["name"],
         }
 
-        if destination is not None:
-            columns["destination_account_id"] = destination.id
+        destination_account_id = destination.id if destination is not None else None
+        if destination_account_id is not None:
+            columns["destination_account_id"] = destination_account_id
 
-        return {"columns": columns, "destination": destination}
+        return {"columns": columns, "destination_account_id": destination_account_id}
 
     def _parse_future_business_day(self, schedule_date: str) -> date:
         """Lê schedule_date e exige um dia útil DEPOIS de hoje (QIT001049)."""
