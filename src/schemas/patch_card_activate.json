@@ -1,0 +1,13 @@
+{
+  "title": "PatchCardActivate",
+  "description": "Ativação de cartão físico pelo código impresso na carta (6 dígitos).",
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "pattern": "^\\d{6}$"
+    }
+  },
+  "required": ["code"],
+  "additionalProperties": false
+}

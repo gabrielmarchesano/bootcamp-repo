@@ -1,0 +1,66 @@
+{
+  "title": "PostCard",
+  "description": "Emissão de cartão. VIRTUAL nasce ACTIVE; PLASTIC nasce EMBOSSING e aceita contactless_enabled. contactless só faz sentido no plástico, então um VIRTUAL com contactless_enabled é recusado.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": ["VIRTUAL"]
+        },
+        "functions": {
+          "enum": ["DEBIT", "CREDIT", "MULTIPLE"]
+        },
+        "printed_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 26
+        },
+        "card_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15
+        },
+        "brand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        }
+      },
+      "required": ["type", "functions", "printed_name"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": ["PLASTIC"]
+        },
+        "functions": {
+          "enum": ["DEBIT", "CREDIT", "MULTIPLE"]
+        },
+        "printed_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 26
+        },
+        "card_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 15
+        },
+        "brand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 20
+        },
+        "contactless_enabled": {
+          "type": "boolean"
+        }
+      },
+      "required": ["type", "functions", "printed_name"],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "title": "PatchCreditWalletLimit",
+  "description": "Novo limite total da carteira. Nunca abaixo do já usado (conferido no controller).",
+  "type": "object",
+  "properties": {
+    "total_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    }
+  },
+  "required": ["total_limit"],
+  "additionalProperties": false
+}

@@ -1,0 +1,36 @@
+{
+  "title": "PostCreditWallet",
+  "description": "Abertura de carteira de crédito (QI wallet). Limite, ciclo e encargos vêm da IF. Os limites de dia e taxas espelham os CHECKs da tabela credit_wallet.",
+  "type": "object",
+  "properties": {
+    "total_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "closing_day": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 28
+    },
+    "due_day": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 28
+    },
+    "monthly_interest_rate": {
+      "type": "number",
+      "minimum": 0
+    },
+    "fine_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 0.02
+    },
+    "autopay": {
+      "type": "boolean"
+    }
+  },
+  "required": ["total_limit", "closing_day", "due_day", "monthly_interest_rate", "fine_rate"],
+  "additionalProperties": false
+}

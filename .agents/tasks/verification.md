@@ -44,37 +44,47 @@ Decisão do usuário: Opção A — Etapa 0 estabiliza a main AINDA no schema v6
   (Instalado `tzdata` no venv: dependência do ambiente de teste no Windows, não do código-fonte.)
 - `pix_key_inquiry.py` existe; `pix_key_injury.py` não existe.
 
-## Resultado do pytest (suíte completa, `pytest tests -q`)
+## Schemas de cartão/carteira/fatura (escopo ampliado — decisão Opção B)
+
+Os cartões já fazem parte da main v6 que a Etapa 0 estabiliza; o item 0.8 pede 130/130, e os 33 testes
+de cartão estão na suíte. As rotas de cartão (controllers/resources/repositories) JÁ existiam no código,
+só faltavam os SCHEMAS de request. Criados os 12 por engenharia reversa dos contratos que os controllers
+já consomem, no mesmo estilo dos schemas existentes:
+- `post_credit_wallet.json` (total_limit, closing_day/due_day 1–28, monthly_interest_rate >= 0,
+  fine_rate 0–0.02 — espelha os CHECKs da tabela credit_wallet; `autopay` opcional).
+- `patch_credit_wallet_limit.json` (total_limit).
+- `patch_credit_wallet_status.json` (status ACTIVE/BLOCKED/CLOSED + reason).
+- `get_wallet_invoices.json` (query param `status` repetível, enum dos status de fatura).
+- `post_card.json` (oneOf por type: VIRTUAL sem contactless, PLASTIC com contactless_enabled —
+  por isso VIRTUAL+contactless e 400).
+- `patch_card_activate.json` (code, 6 dígitos).
+- `patch_card_status.json` (status + reason).
+- `post_card_authorization.json` (authorization_id, card_id, function DEBIT/CREDIT, amount,
+  installment_count 1–24, merchant_name?, mcc?; parcelamento >= 2 só com function CREDIT → DEBIT
+  parcelado e 400).
+- `post_card_authorization_increment.json` (request_id, amount).
+- `post_card_authorization_reversal.json` (request_id; amount opcional — reversão total omite amount).
+- `post_card_capture.json` (capture_id, authorization_id, amount).
+- `post_card_refund.json` (refund_id, authorization_id, amount).
+
+NÃO foi tocado microcrédito/jobs/encargo de fatura; só os schemas de request das rotas de cartão já
+existentes. `database.sql` continua v6 com o fix do seed, sem alterações adicionais.
+
+## Resultado FINAL do pytest (suíte completa, `pytest tests -q`)
 
 ```
-95 passed, 33 failed, 2 skipped
+128 passed, 2 skipped in ~26s
 ```
 
-- **2 skipped:** `test_transfer_ted.py` — testes de TED imediata que só rodam DENTRO da janela do STR
-  (dia útil, 6h30–17h); fora da janela são `skipif` por desenho do próprio teste.
-- **95 passed:** inclui TODOS os testes de conta/cliente, TEF, Pix (chave, manual, devolução,
-  concorrência), TED (agendada, cancelamento, recebida, janela), webhook SPI/STR e schema-rules.
-  Ou seja, todo o escopo da Etapa 0 (0.1–0.7) está verde.
-- **33 failed:** TODOS em `tests/integration/card/` (cartão, carteira de crédito, autorização,
-  fatura). Causa única e idêntica em todos: faltam os SCHEMAS de request das rotas de cartão
-  (`Exception: Nao encontrei o schema 'post_credit_wallet.json' em /app/schemas`), e por isso o
-  `@SchemaHandler.validate(...)` estoura antes do controller → 500. Os controllers/resources/
-  repositories de cartão existem e estão ligados (a app importa). Faltam estes arquivos em
-  `src/schemas/`: `post_credit_wallet.json`, `patch_credit_wallet_limit.json`,
-  `patch_credit_wallet_status.json`, `get_wallet_invoices.json`, `post_card.json`,
-  `patch_card_activate.json`, `patch_card_status.json`, `post_card_authorization.json`,
-  `post_card_authorization_increment.json`, `post_card_authorization_reversal.json`,
-  `post_card_capture.json`, `post_card_refund.json`.
+Ou seja **130/130** com os 2 skips esperados.
 
-## Observação sobre a meta 130/130
-
-O plano da Etapa 0 define explicitamente os schemas de cartão/crédito/fatura como FORA de escopo
-("Out of scope / documented gaps"), de etapa posterior. A correção do usuário listou o que corrigir
-se um teste falhasse por motivo diferente de schema×código — "imports, métodos de transfer, incoming
-transfer, schemas Pix/TED" — e cartão não está nessa lista. As 33 falhas de cartão são exatamente
-esse gap documentado. Com o escopo da Etapa 0 (0.1–0.7), a suíte está em 95/130; os 33 restantes
-dependem de criar os schemas de cartão, trabalho de etapa posterior. Ponto levantado ao orquestrador
-para decisão (criar os schemas de cartão agora, ampliando o escopo, OU manter o corte do plano).
+- **2 skipped (esperado, não e falha):** `tests/integration/transfer/test_transfer_ted.py:39` e `:57` —
+  os dois testes de TED IMEDIATA, gated pelo próprio `skipif(not ted_window_open())` do teste
+  (só rodam em dia útil, 6h30–17h, horário de Brasília). O próprio backlog/decisão prevê esses 2 skips.
+- **128 passed:** TODO o escopo — conta/cliente, TEF, Pix (chave/manual/devolução/concorrência),
+  TED (agendada/cancelamento/recebida/janela), webhook SPI/STR, schema-rules E as 33 de cartão
+  (emissão, ativação, status, autorização/decisão, incremental, reversão, captura, estorno,
+  faturas/parcelas, concorrência).
 
 ## Estado do ambiente ao final
 - Stack Docker de pé e saudável.
