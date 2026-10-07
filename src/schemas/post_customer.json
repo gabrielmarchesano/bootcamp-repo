@@ -1,11 +1,14 @@
 {
   "title": "PostCustomer",
-  "description": "Cadastro de cliente + abertura de conta. Documentos só com dígitos. Valores em centavos.",
+  "description": "Cadastro de titular (v7) + abertura de conta. Documento só com dígitos (CPF 11 / CNPJ 14). Valores em centavos.",
   "type": "object",
   "properties": {
-    "cpf": {
+    "person_type": {
+      "enum": ["NATURAL", "LEGAL"]
+    },
+    "document": {
       "type": "string",
-      "pattern": "^\\d{11}$"
+      "pattern": "^\\d{11}$|^\\d{14}$"
     },
     "name": {
       "type": "string",
@@ -16,12 +19,13 @@
       "type": "string",
       "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
     },
-    "type": {
-      "enum": ["INDIVIDUAL", "MEI"]
+    "legal_nature": {
+      "enum": ["EI", "SLU", "LTDA"]
     },
-    "cnpj": {
+    "owner_customer_id": {
       "type": "string",
-      "pattern": "^\\d{14}$"
+      "minLength": 1,
+      "maxLength": 64
     },
     "annual_revenue": {
       "type": "integer",
@@ -32,16 +36,40 @@
       "type": "boolean"
     }
   },
-  "required": ["cpf", "name", "birth_date", "type", "annual_revenue"],
+  "required": ["person_type", "document", "name", "annual_revenue"],
   "additionalProperties": false,
-  "if": {
-    "properties": { "type": { "const": "MEI" } },
-    "required": ["type"]
-  },
-  "then": {
-    "required": ["cnpj"]
-  },
-  "else": {
-    "not": { "required": ["cnpj"] }
-  }
+  "allOf": [
+    {
+      "if": {
+        "properties": { "person_type": { "const": "NATURAL" } },
+        "required": ["person_type"]
+      },
+      "then": {
+        "required": ["birth_date"],
+        "not": { "anyOf": [
+          { "required": ["legal_nature"] },
+          { "required": ["owner_customer_id"] }
+        ] }
+      },
+      "else": {
+        "required": ["legal_nature"],
+        "not": { "anyOf": [
+          { "required": ["birth_date"] },
+          { "required": ["is_pep"] }
+        ] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "legal_nature": { "const": "EI" } },
+        "required": ["legal_nature"]
+      },
+      "then": {
+        "required": ["owner_customer_id"]
+      },
+      "else": {
+        "not": { "required": ["owner_customer_id"] }
+      }
+    }
+  ]
 }
