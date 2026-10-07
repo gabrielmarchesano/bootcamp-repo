@@ -167,7 +167,9 @@ CREATE SEQUENCE account_number_seq START 1;
 CREATE TABLE account (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type             TEXT NOT NULL CHECK (type IN ('CUSTOMER','INTERNAL')),
-    customer_id      UUID NOT NULL REFERENCES customer(id),
+    -- Nulo em conta INTERNAL (ledger próprio, sem cliente); obrigatório em CUSTOMER.
+    -- Quem exige/proíbe é o ck_account_type abaixo, por tipo de conta.
+    customer_id      UUID REFERENCES customer(id),
     internal_code    TEXT UNIQUE,  -- só para contas INTERNAL
     branch           CHAR(4),
     number           TEXT UNIQUE,
