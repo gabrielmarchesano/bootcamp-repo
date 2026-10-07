@@ -1,0 +1,17 @@
+{
+  "title": "PostPixKey",
+  "description": "Registro de chave Pix. CPF/CNPJ precisam ser o documento do titular; EVP é gerada pela API (sem key_value). O controller cuida das regras de posse e de EVP.",
+  "type": "object",
+  "properties": {
+    "key_type": {
+      "enum": ["CPF", "CNPJ", "EMAIL", "PHONE", "EVP"]
+    },
+    "key_value": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 77
+    }
+  },
+  "required": ["key_type"],
+  "additionalProperties": false
+}
