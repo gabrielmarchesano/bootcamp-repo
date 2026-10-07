@@ -136,13 +136,17 @@ class TransferRepository:
             {"incoming_id": incoming_transfer_id},
         ).scalar_one()
 
-    def current_fee(self, method: str, customer_type: str) -> int:
-        """A tarifa vigente hoje: a de `effective_from` mais recente que já começou."""
+    def current_fee(self, method: str, customer_segment: str) -> int:
+        """A tarifa vigente hoje: a de `effective_from` mais recente que já começou.
+
+        `customer_segment` é o `fee_segment` (coluna gerada) do titular:
+        INDIVIDUAL para PF e EI/MEI, BUSINESS para sociedade.
+        """
         fee = (
             self.session.query(Fee)
             .filter(
                 Fee.method == method,
-                Fee.customer_type == customer_type,
+                Fee.customer_segment == customer_segment,
                 Fee.effective_from <= func.current_date(),
             )
             .order_by(Fee.effective_from.desc())

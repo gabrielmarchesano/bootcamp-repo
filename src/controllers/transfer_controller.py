@@ -34,7 +34,6 @@ from errors import (
 from models import (
     Account,
     AccountStatus,
-    Customer,
     IncomingTransfer,
     IncomingTransferStatus,
     LedgerEntry,
@@ -157,7 +156,7 @@ class TransferController(BaseController):
             raise AccountNotActive(destination.id, destination.status.enumerator)
 
         amount = payload["amount"]
-        fee = self.transfer_repository.current_fee(Transfer.TEF, source.customer.type)
+        fee = self.transfer_repository.current_fee(Transfer.TEF, source.customer.fee_segment)
 
         if amount + fee > source.available_balance:
             raise InsufficientBalance(amount + fee, source.available_balance)
@@ -316,7 +315,7 @@ class TransferController(BaseController):
         amount = payload["amount"]
         fields = {"columns": resolved["columns"]}
         on_us = destination is not None
-        fee = self.transfer_repository.current_fee(Transfer.PIX, source.customer.type)
+        fee = self.transfer_repository.current_fee(Transfer.PIX, source.customer.fee_segment)
 
         if amount + fee > source.available_balance:
             raise InsufficientBalance(amount + fee, source.available_balance)
@@ -493,7 +492,7 @@ class TransferController(BaseController):
         if not self._ted_window_open():
             raise TedOutsideWindow()
 
-        fee = self.transfer_repository.current_fee(Transfer.TED, source.customer.type)
+        fee = self.transfer_repository.current_fee(Transfer.TED, source.customer.fee_segment)
         if amount + fee > source.available_balance:
             raise InsufficientBalance(amount + fee, source.available_balance)
 
@@ -620,8 +619,9 @@ class TransferController(BaseController):
 
         if destination is not None and destination.id != source_id:
             holder = destination.customer
-            holder_document = holder.cnpj if holder.type == Customer.MEI else holder.cpf
-            if target["document"] != holder_document:
+            # v7: `document` já é CPF ou CNPJ conforme o person_type do
+            # titular — não existe mais holder.cpf/holder.cnpj/holder.type.
+            if target["document"] != holder.document:
                 raise InvalidTargetAccount("document does not match the account holder")
         else:
             destination = None
