@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, text, tuple_
 
@@ -86,6 +86,15 @@ class TransferRepository:
         self.session.flush()
         return transfer
  
+    def generate_str_control_number(self) -> str:
+        """Número de controle do STR, único por transferência.
+
+        O trilho de verdade segue um formato próprio; aqui, no mock, basta
+        um identificador único — a coluna só exige UNIQUE, sem CHECK de
+        formato.
+        """
+        return uuid4().hex
+
     def get_by_end_to_end_id(self, end_to_end_id: str) -> Optional[Transfer]:
         return self.session.query(Transfer).filter(Transfer.end_to_end_id == end_to_end_id).first()
  

@@ -22,17 +22,29 @@ class IncomingTransferRepository:
             .first()
         )
 
-    def create(self, rail: str, payload: dict, destination_account_id, status: str) -> IncomingTransfer:
+    def create(
+        self,
+        rail: str,
+        payload: dict,
+        destination_account_id,
+        status: str,
+        pix_transfer_type: str = None,
+        original_transfer_id=None,
+    ) -> IncomingTransfer:
         sender = payload.get("sender", {})
 
         incoming = IncomingTransfer()
         incoming.rail = rail
+        incoming.pix_transfer_type = pix_transfer_type
         incoming.external_id = payload["external_id"]
         incoming.destination_account_id = destination_account_id
         incoming.amount = payload["amount"]
         incoming.sender_name = sender.get("name")
         incoming.sender_document = sender.get("document")
         incoming.sender_ispb = sender.get("ispb")
+        incoming.receiver_pix_key = payload.get("receiver_pix_key")
+        incoming.pix_message = payload.get("pix_message")
+        incoming.original_transfer_id = original_transfer_id
         incoming.status = self.enumerators.get(IncomingTransferStatus, status)
 
         self.session.add(incoming)
