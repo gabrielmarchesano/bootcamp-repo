@@ -1,3 +1,30 @@
+# Resoluções de escopo (decididas pelo usuário + orquestrador — ler primeiro)
+
+O review (CHANGES_REQUESTED) levantou 2 pontos de escopo. Ambos foram deliberadamente
+decididos pelo usuário/orquestrador — o reviewer não tinha esse contexto. Decisão: **MANTER as duas
+mudanças, não reverter**. Resumo para o grupo revisor do PR:
+
+1. **Fix do seed em `database/database.sql` = item 0.7 do backlog (correção pedida, não violação).**
+   A restrição "não alterar database.sql" foi escrita assumindo que o schema v7 pré-aplicado já
+   corrigia o seed. Ao reverter para o schema **v6 da main** (Opção A escolhida pelo usuário), o item
+   0.7 passou a valer de verdade: o schema de `main` é **autocontraditório** — `account.customer_id`
+   é `UUID NOT NULL`, mas o `ck_account_type` exige `customer_id IS NULL` em contas INTERNAL, e o seed
+   de 7 contas internas (`INSERT INTO account (type, internal_code, status_id) SELECT 'INTERNAL' …`,
+   ~linha 842) não informa `customer_id`. Resultado: o schema **não carrega do zero** (violação de
+   NOT NULL no seed). A mudança feita — remover apenas o `NOT NULL` de `account.customer_id`, mantendo
+   o `ck_account_type` que já garante a nulabilidade correta por tipo de conta e alinhando com
+   `src/models/account.py` — é exatamente a correção que o item 0.7 pede. Mantida.
+
+2. **12 schemas de cartão/carteira/fatura = Opção B, aprovada pelo usuário.**
+   Cartões fazem parte da main v6 (commit "v6 - include cards and pix transfer") e o item 0.8 exige
+   130/130, que inclui os 33 testes de cartão. Os schemas adicionados são apenas **contratos de request
+   de rotas que já existiam** nos controllers (sem rotas/controllers/códigos de erro novos).
+   `get_wallet_invoices.json` é o contrato da rota de **listagem** de faturas (já existente), não o
+   encargo/pagamento de fatura (itens 3.2/3.3) nem jobs — esses continuam fora de escopo e intocados.
+   Os 12 schemas foram mantidos.
+
+---
+
 # Verificação — Etapa 0: Estabilizar a main (schema v6)
 
 Worktree: `c:\Users\Gustavo\Desktop\RFC\bootcamp-repo\.worktrees\etapa-0-estabilizar`
