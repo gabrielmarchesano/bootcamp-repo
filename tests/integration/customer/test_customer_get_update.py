@@ -3,14 +3,15 @@ from tests.utils import PayloadGenerator, RequestGenerator
 
 class TestCustomerGetUpdate:
     def test_get_returns_customer_with_account(self):
-        payload = PayloadGenerator.create_customer_payload(customer_type="MEI")
+        payload = PayloadGenerator.create_legal_customer_payload(legal_nature="LTDA")
         _, created = RequestGenerator.POST_customer(payload)
 
         status, customer = RequestGenerator.GET_customer(created["customer_id"])
 
         assert status == 200
-        assert customer["cpf"] == payload["cpf"]
-        assert customer["cnpj"] == payload["cnpj"]
+        assert customer["person_type"] == "LEGAL"
+        assert customer["document"] == payload["document"]
+        assert customer["legal_nature"] == "LTDA"
         assert customer["account_id"] == created["account_id"]
         assert customer["kyc_status"] == "APPROVED"
 

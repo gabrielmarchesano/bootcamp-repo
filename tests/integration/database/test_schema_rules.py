@@ -40,10 +40,10 @@ def refused(db, sql: str, params: dict, error=IntegrityError) -> bool:
 def new_account(db, cpf: str):
     customer_id = db.execute(
         text(
-            "INSERT INTO customer (cpf, name, birth_date, type, annual_revenue, microcredit_eligible, kyc_status_id) "
-            "VALUES (:cpf, 'X', '1990-01-01', 'INDIVIDUAL', 100, true, 2) RETURNING id"
+            "INSERT INTO customer (person_type, document, name, birth_date, annual_revenue, kyc_status_id) "
+            "VALUES ('NATURAL', :document, 'X', '1990-01-01', 100, 2) RETURNING id"
         ),
-        {"cpf": cpf},
+        {"document": cpf},
     ).scalar_one()
     return db.execute(
         text(

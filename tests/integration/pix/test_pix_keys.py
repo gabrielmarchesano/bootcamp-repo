@@ -104,4 +104,4 @@ class TestPixKeys:
 
 def customer_cpf(customer: dict) -> str:
     _, full = RequestGenerator.GET_customer(customer["customer_id"])
-    return full["cpf"]
+    return full["document"]
