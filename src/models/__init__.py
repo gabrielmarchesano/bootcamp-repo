@@ -11,6 +11,7 @@ from models.invoice_status import InvoiceStatus
 
 # Conta digital + microcrédito
 from models.customer import Customer
+from models.customer_relationship import CustomerRelationship
 from models.account import Account
 from models.account_status_event import AccountStatusEvent
 from models.fee import Fee
