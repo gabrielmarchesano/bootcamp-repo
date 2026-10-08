@@ -1,5 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Identity, SmallInteger, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
 from sqlalchemy.orm import relationship
 
 from models.base import Base
@@ -16,7 +15,7 @@ class CardAuthorizationStatusEvent(Base):
     __tablename__ = "card_authorization_status_event"
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
-    card_authorization_id = Column(UUID(as_uuid=True), ForeignKey("card_authorization.id"), nullable=False)
+    card_authorization_id = Column(BigInteger, ForeignKey("card_authorization.id"), nullable=False)
     from_status_id = Column(SmallInteger, ForeignKey(CardAuthorizationStatus.id))  # nulo ao nascer
     to_status_id = Column(SmallInteger, ForeignKey(CardAuthorizationStatus.id), nullable=False)
     reason = Column(String(255))

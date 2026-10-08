@@ -8,10 +8,14 @@
 --     CPF, CNPJ, MEI, PIX, TED, TEF, SPI, STR, ISPB, KYC, PEP.
 --   • Dinheiro em centavos (BIGINT). Taxas como fração (0.035 = 3,5 por cento a.m.).
 --   • Timestamps em TIMESTAMPTZ; regras de negócio em America/Sao_Paulo.
---   • Enums como TEXT + CHECK (migração mais simples que ENUM nativo).
+--   • Identidade: id BIGINT (PK, alvo das FKs, nunca sai do banco) e
+--     key UUID (identificador público, o que a API recebe e devolve).
+--   • Valores fixos de coluna como tipos enum_* nativos; status em
+--     tabela enumeradora (seção 0b), com histórico *_status_event.
 --   • Ledger imutável e em partidas dobradas (triggers no fim do arquivo).
 --   • Ordem global de lock: account(s) por id → credit_line → loan
---     → installment → card → invoice.
+--     → installment; nos cartões account → credit_wallet
+--     → card_authorization (a fatura vai protegida pelo lock da carteira).
 --   • Titular (customer) = tomador: um CPF ou um CNPJ. Uma pessoa tem N
 --     titulares (a PF e cada CNPJ) e cada titular tem N contas. Os tetos
 --     de microcrédito agregam por PATRIMÔNIO (exposure_customer_id).
@@ -22,6 +26,69 @@
 -- =====================================================================
 
 SET TIME ZONE 'America/Sao_Paulo';
+
+
+
+
+-- ENUMs para métodos
+CREATE TYPE enum_transfer_method AS ENUM ('TEF', 'PIX', 'TED');
+CREATE TYPE enum_ledger_method AS ENUM ('TEF', 'PIX', 'TED', 'CARD');
+
+-- ENUMs para tipos (Types)
+CREATE TYPE enum_person_type AS ENUM ('NATURAL', 'LEGAL');
+CREATE TYPE enum_account_type AS ENUM ('CUSTOMER', 'INTERNAL');
+CREATE TYPE enum_pix_key_type AS ENUM ('CPF', 'CNPJ', 'EMAIL', 'PHONE', 'EVP');
+CREATE TYPE enum_external_account_type AS ENUM ('CHECKING', 'SALARY', 'SAVINGS', 'PAYMENT');
+CREATE TYPE enum_pix_transfer_type AS ENUM ('KEY', 'MANUAL', 'STATIC_QR_CODE', 'DYNAMIC_QR_CODE', 'REVERSAL');
+CREATE TYPE enum_card_type AS ENUM ('VIRTUAL', 'PLASTIC');
+CREATE TYPE enum_invoice_item_type AS ENUM ('PURCHASE', 'PURCHASE_REFUND', 'REVOLVING_CHARGE');
+CREATE TYPE enum_customer_segment AS ENUM ('INDIVIDUAL', 'BUSINESS');
+CREATE TYPE enum_legal_nature AS ENUM ('EI', 'SLU' ,'LTDA');
+-- ENUMs para tipos complexos (Ledger e Eventos)
+CREATE TYPE enum_ledger_entry_type AS ENUM (
+    'DISBURSEMENT','ORIGINATION_FEE',
+    'TEF_SENT','TEF_RECEIVED',
+    'PIX_SENT','PIX_RECEIVED',
+    'PIX_REVERSAL_SENT','PIX_REVERSAL_RECEIVED',
+    'TED_SENT','TED_RECEIVED',
+    'TRANSFER_FEE',
+    'INSTALLMENT_PAYMENT',
+    'DEBIT_PURCHASE','PURCHASE_REFUND',
+    'INVOICE_PAYMENT',
+    'REVERSAL'
+);
+
+CREATE TYPE enum_reference_type AS ENUM (
+    'TRANSFER', 'INCOMING_TRANSFER', 'LOAN', 
+    'LOAN_PAYMENT', 'CARD_AUTHORIZATION', 'INVOICE_PAYMENT'
+);
+
+CREATE TYPE enum_card_auth_event_type AS ENUM (
+    'AUTHORIZATION', 'INCREMENTAL_AUTHORIZATION', 'REVERSAL', 
+    'PARTIAL_REVERSAL', 'EXPIRATION', 'CAPTURE', 'REFUND', 'PARTIAL_REFUND'
+);
+
+-- Papel do relacionamento
+CREATE TYPE enum_relationship_role AS ENUM ('PARTNER', 'ADMINISTRATOR', 'ATTORNEY');
+
+-- Pagamentos de Empréstimo e Fatura
+CREATE TYPE enum_loan_payment_source AS ENUM ('MANUAL', 'AUTO_COLLECTION');
+CREATE TYPE enum_invoice_payment_source AS ENUM ('MANUAL', 'AUTOPAY');
+CREATE TYPE enum_loan_payment_mode AS ENUM ('REDUCE_TERM', 'REDUCE_INSTALLMENT');
+
+-- Trilhos e Devoluções
+CREATE TYPE enum_transfer_rail AS ENUM ('SPI', 'STR');
+CREATE TYPE enum_reversal_reason AS ENUM ('CLIENT_REQUEST', 'RECONCILIATION');
+
+-- Cartões e Autorizações
+CREATE TYPE enum_card_brand AS ENUM ('VISA', 'MASTERCARD');
+CREATE TYPE enum_card_functions AS ENUM ('DEBIT', 'CREDIT', 'MULTIPLE'); -- Capacidades do plástico
+CREATE TYPE enum_card_function AS ENUM ('DEBIT', 'CREDIT');              -- A operação de fato
+CREATE TYPE enum_denial_reason AS ENUM (
+    'INSUFFICIENT_FUNDS', 'INSUFFICIENT_LIMIT', 'CARD_NOT_ACTIVE',
+    'ACCOUNT_NOT_ACTIVE', 'WALLET_NOT_ACTIVE', 'FUNCTION_NOT_SUPPORTED',
+    'FRAUD_SUSPICION'
+);
 
 -- ---------------------------------------------------------------------
 -- 0. Apoio: calendário bancário e tabela de tarifas
@@ -34,8 +101,8 @@ CREATE TABLE holiday (
 
 -- Segmento de tarifa = customer.fee_segment (coluna gerada).
 CREATE TABLE fee (
-    method            TEXT   NOT NULL CHECK (method IN ('TEF','PIX','TED')),
-    customer_segment  TEXT   NOT NULL CHECK (customer_segment IN ('INDIVIDUAL','BUSINESS')),
+    method            enum_transfer_method NOT NULL,
+    customer_segment  enum_customer_segment   NOT NULL,
     amount            BIGINT NOT NULL CHECK (amount >= 0),
     effective_from    DATE   NOT NULL DEFAULT CURRENT_DATE,
     PRIMARY KEY (method, customer_segment, effective_from)
@@ -140,7 +207,8 @@ CREATE TABLE outbox_event_status (
 );
 INSERT INTO outbox_event_status (id, enumerator) VALUES
     (1, 'PENDING'), (2, 'SENT'), (3, 'FAILED');
- 
+
+
 
 -- ---------------------------------------------------------------------
 -- 1. Cliente e conta
@@ -151,26 +219,28 @@ INSERT INTO outbox_event_status (id, enumerator) VALUES
 -- importa para as regras é a natureza jurídica (quem responde pela dívida)
 -- e o faturamento (quem é elegível).
 CREATE TABLE customer (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    person_type            TEXT NOT NULL CHECK (person_type IN ('NATURAL','LEGAL')),  -- vocabulário do DICT
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    -- GUID público para a API
+    key                   UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    person_type            enum_person_type NOT NULL,  -- vocabulário do DICT
     document               VARCHAR(14) NOT NULL UNIQUE,   -- CPF (11) ou CNPJ (14), só dígitos
     name                   TEXT NOT NULL,                 -- nome civil ou razão social
     birth_date             DATE,                          -- só NATURAL
     -- Só LEGAL. EI = empresário individual, INCLUI o MEI (MEI é EI no SIMEI).
     -- SLU e LTDA são sociedades: patrimônio próprio. Ampliar por migração.
-    legal_nature           TEXT CHECK (legal_nature IN ('EI','SLU','LTDA')),
+    legal_nature           enum_legal_nature,
     -- Só EI: a pessoa natural que É este CNPJ. EI/MEI não tem personalidade
     -- jurídica distinta; patrimônio único com a PF (jurisprudência do STJ).
-    owner_customer_id      UUID,
-    owner_person_type      TEXT CHECK (owner_person_type = 'NATURAL'),  -- alvo fixo da FK composta
+    owner_customer_id      BIGINT,
+    owner_person_type      enum_person_type CHECK (owner_person_type = 'NATURAL'::enum_person_type), -- alvo fixo da FK composta
     -- Quem responde pela dívida com o próprio patrimônio: a PF para ela
     -- mesma e para o EI/MEI dela; a sociedade para si. Tetos agregam aqui.
-    exposure_customer_id   UUID GENERATED ALWAYS AS (COALESCE(owner_customer_id, id)) STORED,
+    exposure_customer_id   BIGINT GENERATED ALWAYS AS (COALESCE(owner_customer_id, id)) STORED,
     -- Pix gratuito para pessoa natural, inclusive empresário individual
     -- (Res. BCB 19/2020): EI/MEI tarifa como PF; sociedade tarifa como PJ.
-    fee_segment            TEXT GENERATED ALWAYS AS (
-                               CASE WHEN person_type = 'NATURAL' OR legal_nature = 'EI'
-                                    THEN 'INDIVIDUAL' ELSE 'BUSINESS' END) STORED,
+    fee_segment enum_customer_segment GENERATED ALWAYS AS ( CASE WHEN person_type = 'NATURAL' OR legal_nature = 'EI' 
+                                                            THEN 'INDIVIDUAL'::enum_customer_segment 
+                                                            ELSE 'BUSINESS'::enum_customer_segment END) STORED,
     annual_revenue         BIGINT NOT NULL CHECK (annual_revenue >= 0),  -- renda (PF) ou receita bruta (PJ)
     revenue_reference_date DATE NOT NULL DEFAULT CURRENT_DATE,
     -- Res. CMN 4.854 art. 2º: renda ou receita bruta até o teto de
@@ -183,14 +253,17 @@ CREATE TABLE customer (
     CONSTRAINT ux_customer_person_type UNIQUE (id, person_type),         -- alvo das FKs compostas
     CONSTRAINT ux_customer_exposure    UNIQUE (id, exposure_customer_id),
     CONSTRAINT ck_document CHECK (
-        (person_type = 'NATURAL' AND document ~ '^[0-9]{11}$')
-     OR (person_type = 'LEGAL'   AND document ~ '^[0-9]{14}$')),
+        (person_type = 'NATURAL'::enum_person_type AND document ~ '^[0-9]{11}$')
+     OR (person_type = 'LEGAL'::enum_person_type   AND document ~ '^[0-9]{14}$')),
+     
     CONSTRAINT ck_fields_by_person_type CHECK (
-        (person_type = 'NATURAL') = (birth_date IS NOT NULL)
-        AND (person_type = 'LEGAL') = (legal_nature IS NOT NULL)),
-    CONSTRAINT ck_pep_natural CHECK (NOT is_pep OR person_type = 'NATURAL'),
+        (person_type = 'NATURAL'::enum_person_type) = (birth_date IS NOT NULL)
+        AND (person_type = 'LEGAL'::enum_person_type) = (legal_nature IS NOT NULL)),
+        
+    CONSTRAINT ck_pep_natural CHECK (NOT is_pep OR person_type = 'NATURAL'::enum_person_type),
+    
     CONSTRAINT ck_ei_owner CHECK (
-        (legal_nature IS NOT DISTINCT FROM 'EI') = (owner_customer_id IS NOT NULL)
+        (legal_nature IS NOT DISTINCT FROM 'EI'::enum_legal_nature) = (owner_customer_id IS NOT NULL)
         AND (owner_customer_id IS NULL) = (owner_person_type IS NULL)),
     -- o dono do EI é sempre uma pessoa natural
     CONSTRAINT fk_ei_owner FOREIGN KEY (owner_customer_id, owner_person_type)
@@ -201,11 +274,11 @@ CREATE INDEX ix_customer_owner ON customer (owner_customer_id) WHERE owner_custo
 -- Quem opera a conta PJ além do titular do EI: sócios e administradores
 -- de sociedade, procuradores de qualquer PJ. Liga PJ → PF.
 CREATE TABLE customer_relationship (
-    legal_customer_id     UUID NOT NULL,
-    legal_person_type     TEXT NOT NULL DEFAULT 'LEGAL'   CHECK (legal_person_type = 'LEGAL'),
-    natural_customer_id   UUID NOT NULL,
-    natural_person_type   TEXT NOT NULL DEFAULT 'NATURAL' CHECK (natural_person_type = 'NATURAL'),
-    role                  TEXT NOT NULL CHECK (role IN ('PARTNER','ADMINISTRATOR','ATTORNEY')),
+    legal_customer_id     BIGINT NOT NULL,
+    legal_person_type     enum_person_type NOT NULL DEFAULT 'LEGAL'::enum_person_type   CHECK (legal_person_type = 'LEGAL'::enum_person_type),
+    natural_customer_id   BIGINT NOT NULL,
+    natural_person_type   enum_person_type NOT NULL DEFAULT 'NATURAL'::enum_person_type CHECK (natural_person_type = 'NATURAL'::enum_person_type),
+    role enum_relationship_role NOT NULL,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (legal_customer_id, natural_customer_id, role),
     CONSTRAINT fk_relationship_legal FOREIGN KEY (legal_customer_id, legal_person_type)
@@ -219,9 +292,11 @@ CREATE INDEX ix_customer_relationship_natural ON customer_relationship (natural_
 CREATE SEQUENCE account_number_seq START 1;
 
 CREATE TABLE account (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    type             TEXT NOT NULL CHECK (type IN ('CUSTOMER','INTERNAL')),
-    customer_id      UUID REFERENCES customer(id),  -- NULL só em INTERNAL; N contas por titular
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    -- GUID público para a API
+    key              UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    type             enum_account_type NOT NULL,
+    customer_id      BIGINT REFERENCES customer(id),  -- NULL só em INTERNAL; N contas por titular
     internal_code    TEXT UNIQUE,  -- só para contas INTERNAL
     branch           CHAR(4),
     number           TEXT UNIQUE,
@@ -234,10 +309,10 @@ CREATE TABLE account (
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT ck_account_type CHECK (
-        (type = 'CUSTOMER' AND customer_id IS NOT NULL AND internal_code IS NULL
+        (type = 'CUSTOMER'::enum_account_type AND customer_id IS NOT NULL AND internal_code IS NULL
              AND balance IS NOT NULL AND held_balance IS NOT NULL
              AND held_balance >= 0 AND number IS NOT NULL)
-     OR (type = 'INTERNAL' AND customer_id IS NULL AND internal_code IS NOT NULL
+        OR (type = 'INTERNAL'::enum_account_type AND customer_id IS NULL AND internal_code IS NOT NULL
              AND balance IS NULL AND held_balance IS NULL)),
     CONSTRAINT ux_account_customer UNIQUE (id, customer_id)  -- alvo da FK composta do loan
     -- Sem CHECK balance >= 0: captura mandatória de débito pode negativar (regra da IF).
@@ -246,7 +321,7 @@ CREATE INDEX ix_account_customer ON account (customer_id) WHERE customer_id IS N
 
 CREATE TABLE account_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    account_id      UUID     NOT NULL REFERENCES account(id),
+    account_id      BIGINT     NOT NULL REFERENCES account(id),
     from_status_id  SMALLINT REFERENCES account_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES account_status(id),
     reason          VARCHAR(255),
@@ -261,25 +336,13 @@ CREATE INDEX ix_account_status_event ON account_status_event (account_id, id);
 CREATE TABLE ledger_entry (
     id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     operation_id     UUID   NOT NULL,          -- agrupa as pernas; SUM(amount) = 0
-    account_id       UUID   NOT NULL REFERENCES account(id),
+    account_id       BIGINT   NOT NULL REFERENCES account(id),
     amount           BIGINT NOT NULL CHECK (amount <> 0),  -- + crédito / − débito
-    type             TEXT   NOT NULL CHECK (type IN (
-                        'DISBURSEMENT','ORIGINATION_FEE',
-                        'TEF_SENT','TEF_RECEIVED',
-                        'PIX_SENT','PIX_RECEIVED',
-                        'PIX_REVERSAL_SENT','PIX_REVERSAL_RECEIVED',
-                        'TED_SENT','TED_RECEIVED',
-                        'TRANSFER_FEE',
-                        'INSTALLMENT_PAYMENT',
-                        'DEBIT_PURCHASE','PURCHASE_REFUND',
-                        'INVOICE_PAYMENT',
-                        'REVERSAL')),
-    method           TEXT CHECK (method IN ('TEF','PIX','TED','CARD')),
+    type             enum_ledger_entry_type NOT NULL,
+    method           enum_ledger_method,
     balance_after    BIGINT,                   -- preenchido só em conta CUSTOMER
-    reference_type   TEXT CHECK (reference_type IN (
-                        'TRANSFER','INCOMING_TRANSFER','LOAN',
-                        'LOAN_PAYMENT','CARD_AUTHORIZATION','INVOICE_PAYMENT')),
-    reference_id     UUID,
+    reference_type   enum_reference_type,
+    reference_id     BIGINT,
     external_id      TEXT,                     -- endToEndId / nº de controle STR
     reversal_of_id   BIGINT REFERENCES ledger_entry(id),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -299,8 +362,9 @@ CREATE INDEX ix_ledger_reference ON ledger_entry (reference_type, reference_id);
 -- próprio lock: contratações concorrentes do mesmo patrimônio disputam
 -- esta linha, mesmo vindo de contas ou CNPJs diferentes.
 CREATE TABLE credit_line (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    customer_id             UUID NOT NULL UNIQUE,   -- raiz do patrimônio (id = exposure_customer_id)
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                     UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    customer_id             BIGINT NOT NULL UNIQUE,   -- raiz do patrimônio (id = exposure_customer_id)
     version                 INT  NOT NULL DEFAULT 1 CHECK (version >= 1),
     total_limit             BIGINT NOT NULL CHECK (total_limit > 0 AND total_limit <= 2100000),
     available_limit         BIGINT NOT NULL CHECK (available_limit >= 0),
@@ -316,7 +380,7 @@ CREATE TABLE credit_line (
 
 -- Histórico append-only de cada PUT da IF (auditoria)
 CREATE TABLE credit_line_version (
-    credit_line_id          UUID NOT NULL REFERENCES credit_line(id),
+    credit_line_id          BIGINT NOT NULL REFERENCES credit_line(id),
     version                 INT  NOT NULL,
     total_limit             BIGINT NOT NULL,
     monthly_interest_rate   NUMERIC(9,6) NOT NULL,
@@ -331,11 +395,12 @@ CREATE TABLE credit_line_version (
 --   • account_id           conta do tomador que recebe o desembolso e paga
 --   • exposure_customer_id patrimônio que responde (= dono da credit_line)
 CREATE TABLE loan (
-    id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id                  UUID NOT NULL,
-    customer_id                 UUID NOT NULL,
-    exposure_customer_id        UUID NOT NULL,
-    credit_line_id              UUID NOT NULL,
+    id                          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                         UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    account_id                  BIGINT NOT NULL,
+    customer_id                 BIGINT NOT NULL,
+    exposure_customer_id        BIGINT NOT NULL,
+    credit_line_id              BIGINT NOT NULL,
     credit_line_version         INT  NOT NULL,
     idempotency_key             TEXT NOT NULL UNIQUE,
     request_hash                CHAR(64) NOT NULL,       -- SHA-256 do payload
@@ -373,7 +438,7 @@ CREATE INDEX ix_loan_exposure_active ON loan (exposure_customer_id) WHERE status
 
 CREATE TABLE loan_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    loan_id         UUID     NOT NULL REFERENCES loan(id),
+    loan_id         BIGINT     NOT NULL REFERENCES loan(id),
     from_status_id  SMALLINT REFERENCES loan_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES loan_status(id),
     reason          VARCHAR(255),
@@ -383,8 +448,9 @@ CREATE TABLE loan_status_event (
 CREATE INDEX ix_loan_status_event ON loan_status_event (loan_id, id);
 
 CREATE TABLE installment (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    loan_id             UUID NOT NULL REFERENCES loan(id),
+    id                  BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                 UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    loan_id             BIGINT NOT NULL REFERENCES loan(id),
     number              SMALLINT NOT NULL CHECK (number >= 1),
     due_date            DATE NOT NULL,                -- já ajustado a dia útil
     principal_amount    BIGINT NOT NULL CHECK (principal_amount >= 0),
@@ -403,7 +469,7 @@ CREATE INDEX ix_installment_collection ON installment (due_date)
 
 CREATE TABLE installment_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    installment_id  UUID     NOT NULL REFERENCES installment(id),
+    installment_id  BIGINT     NOT NULL REFERENCES installment(id),
     from_status_id  SMALLINT REFERENCES installment_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES installment_status(id),
     reason          VARCHAR(255),
@@ -414,23 +480,24 @@ CREATE INDEX ix_installment_status_event ON installment_status_event (installmen
 
 
 CREATE TABLE loan_payment (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    loan_id          UUID NOT NULL REFERENCES loan(id),
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key              UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    loan_id          BIGINT NOT NULL REFERENCES loan(id),
     idempotency_key  TEXT UNIQUE,         -- NULL quando source = AUTO_COLLECTION
     request_hash     CHAR(64),
-    source           TEXT NOT NULL CHECK (source IN ('MANUAL','AUTO_COLLECTION')),
-    mode             TEXT CHECK (mode IN ('REDUCE_TERM','REDUCE_INSTALLMENT')),
+    source           enum_loan_payment_source NOT NULL,
+    mode             enum_loan_payment_mode,
     amount           BIGINT NOT NULL CHECK (amount > 0),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT ck_manual CHECK (
-        (source = 'MANUAL' AND idempotency_key IS NOT NULL AND mode IS NOT NULL)
-     OR (source = 'AUTO_COLLECTION'))
+        (source = 'MANUAL'::enum_loan_payment_source AND idempotency_key IS NOT NULL AND mode IS NOT NULL)
+     OR (source = 'AUTO_COLLECTION'::enum_loan_payment_source))
 );
 
 -- Como cada pagamento foi alocado nas parcelas (antecipação a valor presente)
 CREATE TABLE payment_allocation (
-    payment_id          UUID NOT NULL REFERENCES loan_payment(id),
-    installment_id      UUID NOT NULL REFERENCES installment(id),
+    payment_id          BIGINT NOT NULL REFERENCES loan_payment(id),
+    installment_id      BIGINT NOT NULL REFERENCES installment(id),
     principal_amount    BIGINT NOT NULL CHECK (principal_amount >= 0),
     interest_amount     BIGINT NOT NULL CHECK (interest_amount >= 0),
     prepayment_discount BIGINT NOT NULL DEFAULT 0 CHECK (prepayment_discount >= 0),  -- CDC art. 52 §2º
@@ -444,9 +511,10 @@ CREATE TABLE payment_allocation (
 --     para resolver um Pix entre contas da casa. Limite por conta
 --     (PF 5, PJ 20) fica no PixKeyController.
 CREATE TABLE pix_key (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id  UUID NOT NULL REFERENCES account(id),
-    key_type    TEXT NOT NULL CHECK (key_type IN ('CPF','CNPJ','EMAIL','PHONE','EVP')),
+    id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key         UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    account_id  BIGINT NOT NULL REFERENCES account(id),
+    key_type    enum_pix_key_type NOT NULL,
     key_value   VARCHAR(77) NOT NULL,
     status_id   SMALLINT NOT NULL REFERENCES pix_key_status(id),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -458,7 +526,7 @@ CREATE INDEX ix_pix_key_account ON pix_key (account_id) WHERE status_id = 1;    
  
 CREATE TABLE pix_key_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    pix_key_id      UUID     NOT NULL REFERENCES pix_key(id),
+    pix_key_id      BIGINT     NOT NULL REFERENCES pix_key(id),
     from_status_id  SMALLINT REFERENCES pix_key_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES pix_key_status(id),
     reason          VARCHAR(255),
@@ -475,10 +543,11 @@ CREATE INDEX ix_pix_key_status_event ON pix_key_status_event (pix_key_id, id);
 --     Registro de fato, append-only. "Foi usada" não é estado da consulta:
 --     é existir uma transferência apontando para ela.
 CREATE TABLE pix_key_inquiry (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id              UUID NOT NULL REFERENCES account(id),     -- quem consultou
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                     UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    account_id              BIGINT NOT NULL REFERENCES account(id),     -- quem consultou
     pix_key                 VARCHAR(77) NOT NULL,
-    key_type                TEXT NOT NULL CHECK (key_type IN ('CPF','CNPJ','EMAIL','PHONE','EVP')),
+    key_type                enum_pix_key_type NOT NULL,
     end_to_end_id           CHAR(32) NOT NULL UNIQUE
                             CHECK (end_to_end_id ~ '^E[0-9]{8}[0-9]{12}[A-Za-z0-9]{11}$'),
     -- resposta do DICT (documento sempre mascarado, como o BCB devolve)
@@ -486,11 +555,11 @@ CREATE TABLE pix_key_inquiry (
     account_branch          VARCHAR(4) NOT NULL,
     account_number          VARCHAR(20) NOT NULL,
     account_digit           CHAR(1),
-    account_type            TEXT NOT NULL CHECK (account_type IN ('CHECKING','SALARY','SAVINGS','PAYMENT')),
+    account_type            enum_external_account_type NOT NULL,
     owner_name              VARCHAR(120) NOT NULL,
     owner_masked_document   VARCHAR(18) NOT NULL,
-    owner_person_type       TEXT NOT NULL CHECK (owner_person_type IN ('NATURAL','LEGAL')),
-    destination_account_id  UUID REFERENCES account(id),              -- preenchido se a chave é nossa
+    owner_person_type       enum_person_type NOT NULL,
+    destination_account_id  BIGINT REFERENCES account(id),              -- preenchido se a chave é nossa
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at              TIMESTAMPTZ NOT NULL,
     CONSTRAINT ck_inquiry_window CHECK (expires_at > created_at),
@@ -501,33 +570,33 @@ CREATE INDEX ix_pix_key_inquiry_account ON pix_key_inquiry (account_id, created_
 -- 4c. Transferência de saída. Uma tabela para os três meios; as rotas da
 --     API é que são separadas por trilho, como na QI.
 CREATE TABLE transfer (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                     UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
     idempotency_key         TEXT NOT NULL UNIQUE,
     request_hash            CHAR(64) NOT NULL,
-    source_account_id       UUID NOT NULL REFERENCES account(id),
-    method                  TEXT NOT NULL CHECK (method IN ('TEF','PIX','TED')),
-    -- QI pix_transfer_type. QR code (static/dynamic) fica para a v2.
-    pix_transfer_type       TEXT CHECK (pix_transfer_type IN ('KEY','MANUAL','REVERSAL')),
+    source_account_id       BIGINT NOT NULL REFERENCES account(id),
+    method                  enum_transfer_method NOT NULL,
+    pix_transfer_type       enum_pix_transfer_type,
     amount                  BIGINT NOT NULL CHECK (amount > 0),
     fee                     BIGINT NOT NULL DEFAULT 0 CHECK (fee >= 0),
     status_id               SMALLINT NOT NULL REFERENCES transfer_status(id),
     on_us                   BOOLEAN NOT NULL DEFAULT FALSE,
     -- destino interno (TEF e PIX on-us)
-    destination_account_id  UUID REFERENCES account(id),
+    destination_account_id  BIGINT REFERENCES account(id),
     -- destino externo (QI target_account)
     pix_key                 TEXT,
-    pix_key_inquiry_id      UUID UNIQUE,                 -- e2e da consulta: uso único
+    pix_key_inquiry_id      BIGINT UNIQUE,               -- e2e da consulta: uso único
     destination_ispb        CHAR(8),
     destination_branch      TEXT,
     destination_account     TEXT,
     destination_account_digit CHAR(1),
-    destination_account_type TEXT CHECK (destination_account_type IN ('CHECKING','SALARY','SAVINGS','PAYMENT')),
+    destination_account_type enum_external_account_type,    
     destination_document    TEXT,
     destination_name        TEXT,
     pix_message             VARCHAR(140),                -- QI: até 140, sem emoji (controller)
     -- devolução de Pix RECEBIDO (QI: POST .../pix_transfer/{key}/reversal)
-    original_incoming_transfer_id UUID,                  -- FK no fim da seção (tabela circular)
-    reversal_reason         TEXT CHECK (reversal_reason IN ('CLIENT_REQUEST','RECONCILIATION')),
+    original_incoming_transfer_id BIGINT,                -- FK no fim da seção (tabela circular)
+    reversal_reason enum_reversal_reason,
     -- trilho
     end_to_end_id           TEXT UNIQUE,                 -- E… no Pix; D… na devolução
     str_control_number      TEXT UNIQUE,
@@ -539,31 +608,29 @@ CREATE TABLE transfer (
     completed_at            TIMESTAMPTZ,
     CONSTRAINT ck_same_account CHECK (destination_account_id IS DISTINCT FROM source_account_id),
     CONSTRAINT ck_destination_by_method CHECK (
-        (method = 'TEF' AND destination_account_id IS NOT NULL AND on_us)
-     OR (method = 'PIX' AND pix_transfer_type = 'KEY'
+        (method = 'TEF'::enum_transfer_method AND destination_account_id IS NOT NULL AND on_us)
+     OR (method = 'PIX'::enum_transfer_method AND pix_transfer_type = 'KEY'::enum_pix_transfer_type
             AND pix_key IS NOT NULL AND pix_key_inquiry_id IS NOT NULL AND end_to_end_id IS NOT NULL
             AND on_us = (destination_account_id IS NOT NULL))
-     OR (method = 'PIX' AND pix_transfer_type = 'MANUAL'
+     OR (method = 'PIX'::enum_transfer_method AND pix_transfer_type = 'MANUAL'::enum_pix_transfer_type
             AND destination_ispb IS NOT NULL AND destination_branch IS NOT NULL
             AND destination_account IS NOT NULL AND destination_document IS NOT NULL
             AND destination_name IS NOT NULL AND destination_account_type IS NOT NULL
             AND on_us = (destination_account_id IS NOT NULL))
-     OR (method = 'PIX' AND pix_transfer_type = 'REVERSAL' AND NOT on_us
+     OR (method = 'PIX'::enum_transfer_method AND pix_transfer_type = 'REVERSAL'::enum_pix_transfer_type AND NOT on_us
             AND destination_ispb IS NOT NULL)
-     OR (method = 'TED' AND destination_ispb IS NOT NULL AND destination_branch IS NOT NULL
+     OR (method = 'TED'::enum_transfer_method AND destination_ispb IS NOT NULL AND destination_branch IS NOT NULL
             AND destination_account IS NOT NULL AND destination_document IS NOT NULL
             AND destination_name IS NOT NULL AND destination_account_type IS NOT NULL
             AND NOT on_us)),
-    CONSTRAINT ck_pix_type_by_method CHECK ((method = 'PIX') = (pix_transfer_type IS NOT NULL)),
-    CONSTRAINT ck_pix_message_only_pix CHECK (pix_message IS NULL OR method = 'PIX'),
-    -- Pix: E (pagamento) ou D (devolução) + ISPB + yyyyMMddHHmm + 11 alfanuméricos
+    CONSTRAINT ck_pix_type_by_method CHECK ((method = 'PIX'::enum_transfer_method) = (pix_transfer_type IS NOT NULL)),
+    CONSTRAINT ck_pix_message_only_pix CHECK (pix_message IS NULL OR method = 'PIX'::enum_transfer_method),
     CONSTRAINT ck_e2e_format CHECK (
         end_to_end_id IS NULL OR end_to_end_id ~ '^[ED][0-9]{8}[0-9]{12}[A-Za-z0-9]{11}$'),
     CONSTRAINT ck_reversal_link CHECK (
-        COALESCE(pix_transfer_type = 'REVERSAL', FALSE) = (original_incoming_transfer_id IS NOT NULL)
+        COALESCE(pix_transfer_type = 'REVERSAL'::enum_pix_transfer_type, FALSE) = (original_incoming_transfer_id IS NOT NULL)
         AND (original_incoming_transfer_id IS NOT NULL) = (reversal_reason IS NOT NULL)),
-    CONSTRAINT ck_scheduled CHECK ((status_id = 2) <= (scheduled_for IS NOT NULL)),  -- 2 = SCHEDULED
-    -- Pix por chave: o e2e tem de ser o da consulta, feita pela MESMA conta
+    CONSTRAINT ck_scheduled CHECK ((status_id = 2) <= (scheduled_for IS NOT NULL)),
     CONSTRAINT fk_transfer_inquiry FOREIGN KEY (pix_key_inquiry_id, source_account_id, end_to_end_id)
         REFERENCES pix_key_inquiry (id, account_id, end_to_end_id)
 );
@@ -580,7 +647,7 @@ CREATE INDEX ix_transfer_reversal ON transfer (original_incoming_transfer_id)
 -- A coluna transfer.status_id é a verdade do agora; esta tabela é a verdade do que aconteceu.
 CREATE TABLE transfer_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    transfer_id     UUID     NOT NULL REFERENCES transfer(id),
+    transfer_id     BIGINT     NOT NULL REFERENCES transfer(id),
     from_status_id  SMALLINT REFERENCES transfer_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES transfer_status(id),
     reason          VARCHAR(255),
@@ -593,25 +660,25 @@ CREATE INDEX ix_transfer_status_event ON transfer_status_event (transfer_id, id)
 --     QI incoming_pix: o tipo inclui "reversal", que aponta para o NOSSO
 --     Pix de saída que está sendo devolvido (original_outgoing_pix_transfer).
 CREATE TABLE incoming_transfer (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    rail                    TEXT NOT NULL CHECK (rail IN ('SPI','STR')),
-    pix_transfer_type       TEXT CHECK (pix_transfer_type IN
-                                ('KEY','MANUAL','STATIC_QR_CODE','DYNAMIC_QR_CODE','REVERSAL')),
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                     UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    rail enum_transfer_rail NOT NULL,
+    pix_transfer_type       enum_pix_transfer_type,
     external_id             TEXT NOT NULL,
-    destination_account_id  UUID REFERENCES account(id),
+    destination_account_id  BIGINT REFERENCES account(id),
     amount                  BIGINT NOT NULL CHECK (amount > 0),
     sender_name             TEXT,
     sender_document         TEXT,
     sender_ispb             CHAR(8),
     receiver_pix_key        VARCHAR(77),
     pix_message             VARCHAR(140),
-    original_transfer_id    UUID REFERENCES transfer(id),
+    original_transfer_id    BIGINT REFERENCES transfer(id),
     status_id               SMALLINT NOT NULL REFERENCES incoming_transfer_status(id),  -- nasce final: sem eventos
     received_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (rail, external_id),
-    CONSTRAINT ck_incoming_pix_type CHECK ((rail = 'SPI') = (pix_transfer_type IS NOT NULL)),
+    CONSTRAINT ck_incoming_pix_type CHECK ((rail = 'SPI'::enum_transfer_rail) = (pix_transfer_type IS NOT NULL)),
     CONSTRAINT ck_incoming_reversal CHECK (
-        COALESCE(pix_transfer_type = 'REVERSAL', FALSE) = (original_transfer_id IS NOT NULL))
+        COALESCE(pix_transfer_type = 'REVERSAL'::enum_pix_transfer_type, FALSE) = (original_transfer_id IS NOT NULL))
 );
 CREATE INDEX ix_incoming_original ON incoming_transfer (original_transfer_id)
     WHERE original_transfer_id IS NOT NULL;
@@ -628,8 +695,9 @@ ALTER TABLE transfer ADD CONSTRAINT fk_transfer_original_incoming
 --     Cartão só de débito não tem carteira: debita a conta, como o
 --     pré-pago da QI.
 CREATE TABLE credit_wallet (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id             UUID NOT NULL REFERENCES account(id),
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                    UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    account_id             BIGINT NOT NULL REFERENCES account(id), -- BIGINT
     status_id              SMALLINT NOT NULL REFERENCES credit_wallet_status(id),
     total_limit            BIGINT NOT NULL CHECK (total_limit >= 0),   -- informado pela IF
     used_limit             BIGINT NOT NULL DEFAULT 0 CHECK (used_limit >= 0),
@@ -649,7 +717,7 @@ CREATE UNIQUE INDEX ux_credit_wallet_live ON credit_wallet (account_id) WHERE st
  
 CREATE TABLE credit_wallet_status_event (
     id                BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    credit_wallet_id  UUID     NOT NULL REFERENCES credit_wallet(id),
+    credit_wallet_id  BIGINT     NOT NULL REFERENCES credit_wallet(id),
     from_status_id    SMALLINT REFERENCES credit_wallet_status(id),       -- nulo ao nascer
     to_status_id      SMALLINT NOT NULL REFERENCES credit_wallet_status(id),
     reason            VARCHAR(255),
@@ -660,14 +728,15 @@ CREATE INDEX ix_credit_wallet_status_event ON credit_wallet_status_event (credit
  
 -- 5b. O cartão é só o instrumento.
 CREATE TABLE card (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id            UUID NOT NULL REFERENCES account(id),
-    wallet_id             UUID,                                 -- NULL se só débito
-    type                  TEXT NOT NULL CHECK (type IN ('VIRTUAL','PLASTIC')),
+    id                    BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                   UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    account_id            BIGINT NOT NULL REFERENCES account(id), -- BIGINT
+    wallet_id             BIGINT, -- BIGINT
+    type                  enum_card_type NOT NULL,
     pan_token             TEXT NOT NULL UNIQUE,                 -- nunca o PAN em claro (PCI DSS)
     last4                 CHAR(4) NOT NULL,
-    brand                 TEXT NOT NULL CHECK (brand IN ('VISA','MASTERCARD')),
-    functions             TEXT NOT NULL CHECK (functions IN ('DEBIT','CREDIT','MULTIPLE')),
+    brand       enum_card_brand NOT NULL,
+    functions   enum_card_functions NOT NULL,
     card_name             VARCHAR(15),                          -- apelido (QI card_name)
     printed_name          VARCHAR(26) NOT NULL,                 -- QI printed_name
     contactless_enabled   BOOLEAN,                              -- só físico
@@ -677,17 +746,18 @@ CREATE TABLE card (
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- a carteira é da MESMA conta do cartão
     CONSTRAINT fk_card_wallet FOREIGN KEY (wallet_id, account_id) REFERENCES credit_wallet (id, account_id),
-    CONSTRAINT ck_card_wallet CHECK ((functions = 'DEBIT') = (wallet_id IS NULL)),
+    CONSTRAINT ck_card_wallet CHECK ((functions = 'DEBIT'::enum_card_functions) = (wallet_id IS NULL)),
     CONSTRAINT ck_card_plastic CHECK (
-        (type = 'PLASTIC') = (contactless_enabled IS NOT NULL)
-        AND (type = 'PLASTIC') = (activation_code_hash IS NOT NULL))
+        (type = 'PLASTIC'::enum_card_type) = (contactless_enabled IS NOT NULL)
+        AND (type = 'PLASTIC'::enum_card_type) = (activation_code_hash IS NOT NULL))
 );
+
 CREATE INDEX ix_card_account ON card (account_id);
 CREATE INDEX ix_card_wallet ON card (wallet_id) WHERE wallet_id IS NOT NULL;
  
 CREATE TABLE card_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    card_id         UUID     NOT NULL REFERENCES card(id),
+    card_id         BIGINT     NOT NULL REFERENCES card(id),
     from_status_id  SMALLINT REFERENCES card_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES card_status(id),
     reason          VARCHAR(255),
@@ -700,11 +770,12 @@ CREATE INDEX ix_card_status_event ON card_status_event (card_id, id);
 --     O agregado guarda os totais correntes; cada movimento financeiro é
 --     uma linha em card_authorization_event (enumerador da QI, 1 para 1).
 CREATE TABLE card_authorization (
-    id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id                   BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                  UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
     authorization_id     TEXT NOT NULL UNIQUE,     -- id da rede: idempotência
-    card_id              UUID NOT NULL REFERENCES card(id),
-    account_id           UUID NOT NULL REFERENCES account(id),
-    function             TEXT NOT NULL CHECK (function IN ('DEBIT','CREDIT')),
+    card_id              BIGINT NOT NULL REFERENCES card(id),
+    account_id           BIGINT NOT NULL REFERENCES account(id),
+    function             enum_card_function NOT NULL,
     amount               BIGINT NOT NULL CHECK (amount > 0),          -- valor ORIGINAL pedido
     authorized_amount    BIGINT NOT NULL CHECK (authorized_amount >= 0),  -- após incrementais e reversões
     captured_amount      BIGINT NOT NULL DEFAULT 0 CHECK (captured_amount >= 0),
@@ -714,18 +785,15 @@ CREATE TABLE card_authorization (
     mcc                  CHAR(4),
     status_id            SMALLINT NOT NULL REFERENCES card_authorization_status(id),
     response_code        CHAR(2) NOT NULL,         -- ISO 8583: '00' aprovada · '51' saldo/limite …
-    denial_reason        TEXT CHECK (denial_reason IN (
-                             'INSUFFICIENT_FUNDS','INSUFFICIENT_LIMIT','CARD_NOT_ACTIVE',
-                             'ACCOUNT_NOT_ACTIVE','WALLET_NOT_ACTIVE','FUNCTION_NOT_SUPPORTED',
-                             'FRAUD_SUSPICION')),
+    denial_reason  enum_denial_reason,
     approval_code        CHAR(6),
     expires_at           TIMESTAMPTZ,
     response_payload     JSONB NOT NULL,           -- replay idêntico em reenvio
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT ck_refund_le_capture CHECK (refunded_amount <= captured_amount),
-    CONSTRAINT ck_declined_reason CHECK ((status_id = 2) = (denial_reason IS NOT NULL)),  -- 2 = DECLINED
-    CONSTRAINT ck_installments_credit CHECK (installment_count = 1 OR function = 'CREDIT')
+    CONSTRAINT ck_declined_reason CHECK ((status_id = 2) = (denial_reason IS NOT NULL)),
+    CONSTRAINT ck_installments_credit CHECK (installment_count = 1 OR function = 'CREDIT'::enum_card_function)
 );
 -- Job de expiração de HOLD/reserva
 CREATE INDEX ix_card_auth_expiry ON card_authorization (expires_at) WHERE status_id = 1;  -- APPROVED
@@ -733,7 +801,7 @@ CREATE INDEX ix_card_auth_card ON card_authorization (card_id, created_at);
  
 CREATE TABLE card_authorization_status_event (
     id                     BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    card_authorization_id  UUID     NOT NULL REFERENCES card_authorization(id),
+    card_authorization_id  BIGINT     NOT NULL REFERENCES card_authorization(id),
     from_status_id         SMALLINT REFERENCES card_authorization_status(id),   -- nulo ao nascer
     to_status_id           SMALLINT NOT NULL REFERENCES card_authorization_status(id),
     reason                 VARCHAR(255),
@@ -747,11 +815,8 @@ CREATE INDEX ix_card_authorization_status_event ON card_authorization_status_eve
 -- incremental, reversão parcial e expiração, que antes não existiam.
 CREATE TABLE card_authorization_event (
     id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    card_authorization_id  UUID   NOT NULL REFERENCES card_authorization(id),
-    type                   TEXT   NOT NULL CHECK (type IN (
-                               'AUTHORIZATION','INCREMENTAL_AUTHORIZATION',
-                               'REVERSAL','PARTIAL_REVERSAL','EXPIRATION',
-                               'CAPTURE','REFUND','PARTIAL_REFUND')),
+    card_authorization_id  BIGINT   NOT NULL REFERENCES card_authorization(id),
+    type                   enum_card_auth_event_type NOT NULL,
     amount                 BIGINT NOT NULL CHECK (amount > 0),
     external_id            TEXT,      -- id da rede (capture_id, refund_id…): idempotência
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -762,8 +827,9 @@ CREATE INDEX ix_card_auth_event ON card_authorization_event (card_authorization_
  
 -- 5d. Fatura: da CARTEIRA, não do cartão.
 CREATE TABLE invoice (
-    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    wallet_id               UUID NOT NULL REFERENCES credit_wallet(id),
+    id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                     UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    wallet_id               BIGINT NOT NULL REFERENCES credit_wallet(id),
     reference_month         DATE NOT NULL,              -- 1º dia do mês do fechamento
     status_id               SMALLINT NOT NULL REFERENCES invoice_status(id),
     closing_date            DATE NOT NULL,
@@ -782,7 +848,7 @@ CREATE INDEX ix_invoice_due     ON invoice (due_date)     WHERE status_id IN (2,
  
 CREATE TABLE invoice_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    invoice_id      UUID     NOT NULL REFERENCES invoice(id),
+    invoice_id      BIGINT   NOT NULL REFERENCES invoice(id),
     from_status_id  SMALLINT REFERENCES invoice_status(id),            -- nulo ao nascer
     to_status_id    SMALLINT NOT NULL REFERENCES invoice_status(id),
     reason          VARCHAR(255),
@@ -792,10 +858,11 @@ CREATE TABLE invoice_status_event (
 CREATE INDEX ix_invoice_status_event ON invoice_status_event (invoice_id, id);
  
 CREATE TABLE invoice_item (
-    id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    invoice_id             UUID NOT NULL REFERENCES invoice(id),
-    card_authorization_id  UUID REFERENCES card_authorization(id),
-    type                   TEXT NOT NULL CHECK (type IN ('PURCHASE','PURCHASE_REFUND','REVOLVING_CHARGE')),
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key                    UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    invoice_id             BIGINT NOT NULL REFERENCES invoice(id),
+    card_authorization_id  BIGINT REFERENCES card_authorization(id),
+    type                   enum_invoice_item_type NOT NULL,
     amount                 BIGINT NOT NULL CHECK (amount <> 0),   -- estorno negativo
     installment_number     SMALLINT NOT NULL DEFAULT 1,
     installment_total      SMALLINT NOT NULL DEFAULT 1,
@@ -806,17 +873,18 @@ CREATE TABLE invoice_item (
 CREATE INDEX ix_invoice_item ON invoice_item (invoice_id);
  
 CREATE TABLE invoice_payment (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    invoice_id       UUID NOT NULL REFERENCES invoice(id),
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    key              UUID NOT NULL UNIQUE DEFAULT gen_random_uuid(),
+    invoice_id       BIGINT NOT NULL REFERENCES invoice(id),
     idempotency_key  TEXT UNIQUE,         -- NULL no débito automático
     request_hash     CHAR(64),
-    source           TEXT NOT NULL CHECK (source IN ('MANUAL','AUTOPAY')),
+    source           enum_invoice_payment_source NOT NULL,
     amount           BIGINT NOT NULL CHECK (amount > 0),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ck_invoice_payment_manual CHECK (source = 'AUTOPAY' OR idempotency_key IS NOT NULL)
+    CONSTRAINT ck_invoice_payment_manual CHECK (source = 'AUTOPAY'::enum_invoice_payment_source OR idempotency_key IS NOT NULL)
 );
 -- Débito automático: no máximo um por fatura
-CREATE UNIQUE INDEX ux_invoice_payment_autopay ON invoice_payment (invoice_id) WHERE source = 'AUTOPAY';
+CREATE UNIQUE INDEX ux_invoice_payment_autopay ON invoice_payment (invoice_id) WHERE source = 'AUTOPAY'::enum_invoice_payment_source;
 
 -- ---------------------------------------------------------------------
 -- 6. Eventos para a IF (transactional outbox)
@@ -907,7 +975,7 @@ END $$;
 CREATE VIEW vw_internal_account_balance AS
 SELECT a.internal_code, COALESCE(SUM(l.amount), 0) AS balance
 FROM account a LEFT JOIN ledger_entry l ON l.account_id = a.id
-WHERE a.type = 'INTERNAL'
+WHERE a.type = 'INTERNAL'::enum_account_type
 GROUP BY a.internal_code;
  
 -- Saldo de microcrédito por PATRIMÔNIO (Res. CMN 4.854 art. 3º V: teto
@@ -923,19 +991,12 @@ GROUP BY l.exposure_customer_id;
 -- 9. Seeds
 -- ---------------------------------------------------------------------
 INSERT INTO account (type, internal_code, status_id)
-SELECT 'INTERNAL', v.code, s.id
+SELECT 'INTERNAL'::enum_account_type, v.code, s.id
 FROM (VALUES
-    ('LOAN_PORTFOLIO'),           -- carteira de crédito
-    ('ORIGINATION_FEE_REVENUE'),  -- receita de TAC
-    ('INTEREST_REVENUE'),         -- contrapartida dos juros
-    ('FEE_REVENUE'),              -- receita de tarifas
-    ('SPI_SETTLEMENT'),           -- transitória SPI
-    ('STR_SETTLEMENT'),           -- transitória STR
-    ('CARD_SETTLEMENT')           -- liquidação de cartão
-) AS v(code)
-CROSS JOIN account_status s
-WHERE s.enumerator = 'ACTIVE';
- 
+    ('LOAN_PORTFOLIO'), ('ORIGINATION_FEE_REVENUE'), ('INTEREST_REVENUE'),
+    ('FEE_REVENUE'), ('SPI_SETTLEMENT'), ('STR_SETTLEMENT'), ('CARD_SETTLEMENT')
+) AS v(code) CROSS JOIN account_status s WHERE s.enumerator = 'ACTIVE';
+
 -- Toda conta nasce com um evento (null → status inicial), inclusive as internas.
 INSERT INTO account_status_event (account_id, from_status_id, to_status_id, reason)
 SELECT id, NULL, status_id, 'SEED' FROM account WHERE type = 'INTERNAL';
@@ -948,7 +1009,9 @@ SELECT id, NULL, status_id, 'SEED' FROM account WHERE type = 'INTERNAL';
 --     PODE cobrar; zero aqui é premissa do time.
 --   • TED R$ 10,00.
 INSERT INTO fee (method, customer_segment, amount) VALUES
-    ('TEF', 'INDIVIDUAL', 100),  ('TEF', 'BUSINESS', 100),
-    ('PIX', 'INDIVIDUAL', 0),    ('PIX', 'BUSINESS', 0),
-    ('TED', 'INDIVIDUAL', 1000), ('TED', 'BUSINESS', 1000);
- 
+    ('TEF'::enum_transfer_method, 'INDIVIDUAL'::enum_customer_segment, 100),
+    ('TEF'::enum_transfer_method, 'BUSINESS'::enum_customer_segment, 100),
+    ('PIX'::enum_transfer_method, 'INDIVIDUAL'::enum_customer_segment, 0),
+    ('PIX'::enum_transfer_method, 'BUSINESS'::enum_customer_segment, 0),
+    ('TED'::enum_transfer_method, 'INDIVIDUAL'::enum_customer_segment, 1000),
+    ('TED'::enum_transfer_method, 'BUSINESS'::enum_customer_segment, 1000);

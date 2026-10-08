@@ -1,4 +1,6 @@
-from sqlalchemy import CHAR, BigInteger, Column, DateTime, ForeignKey, SmallInteger, String, UniqueConstraint, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, CHAR, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -22,21 +24,23 @@ class IncomingTransfer(Base):
     
     # Os status moram em IncomingTransferStatus (tabela incoming_transfer_status).
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
     rail = Column(String, nullable=False)
     pix_transfer_type = Column(String)
     external_id = Column(String, nullable=False)
-    destination_account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"))
+    destination_account_id = Column(BigInteger, ForeignKey("account.id"))
     amount = Column(BigInteger, nullable=False)
     sender_name = Column(String)
     sender_document = Column(String)
     sender_ispb = Column(CHAR(8))
     receiver_pix_key = Column(String(77))
     pix_message = Column(String(140))
-    original_transfer_id = Column(UUID(as_uuid=True), ForeignKey("transfer.id"))
+    original_transfer_id = Column(BigInteger, ForeignKey("transfer.id"))
     status_id = Column(SmallInteger, ForeignKey(IncomingTransferStatus.id), nullable=False)
     received_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     status = relationship("IncomingTransferStatus", foreign_keys=[status_id], lazy="selectin")
+    original_transfer = relationship("Transfer", foreign_keys=[original_transfer_id], lazy="select")
 
     __table_args__ = (UniqueConstraint("rail", "external_id"),)

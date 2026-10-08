@@ -1,4 +1,6 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, SmallInteger, String, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -12,9 +14,10 @@ class InvoiceItem(Base):
     PURCHASE_REFUND = "PURCHASE_REFUND"
     REVOLVING_CHARGE = "REVOLVING_CHARGE"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    invoice_id = Column(UUID(as_uuid=True), ForeignKey("invoice.id"), nullable=False)
-    card_authorization_id = Column(UUID(as_uuid=True), ForeignKey("card_authorization.id"))
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
+    invoice_id = Column(BigInteger, ForeignKey("invoice.id"), nullable=False)
+    card_authorization_id = Column(BigInteger, ForeignKey("card_authorization.id"))
     type = Column(String, nullable=False)
     amount = Column(BigInteger, nullable=False)
     installment_number = Column(SmallInteger, nullable=False)

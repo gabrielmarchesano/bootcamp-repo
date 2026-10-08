@@ -1,4 +1,6 @@
-from sqlalchemy import CHAR, Column, DateTime, ForeignKey, String, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, CHAR, Column, DateTime, ForeignKey, func, Identity, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from models.base import Base
@@ -20,8 +22,9 @@ class PixKeyInquiry(Base):
     NATURAL = "NATURAL"
     LEGAL = "LEGAL"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
+    account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     pix_key = Column(String(77), nullable=False)
     key_type = Column(String, nullable=False)
     end_to_end_id = Column(CHAR(32), nullable=False, unique=True)
@@ -33,6 +36,6 @@ class PixKeyInquiry(Base):
     owner_name = Column(String(120), nullable=False)
     owner_masked_document = Column(String(18), nullable=False)
     owner_person_type = Column(String, nullable=False)
-    destination_account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"))
+    destination_account_id = Column(BigInteger, ForeignKey("account.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)

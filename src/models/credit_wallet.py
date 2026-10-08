@@ -1,4 +1,6 @@
-from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, Numeric, SmallInteger, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, ForeignKey, func, Identity, Numeric, SmallInteger
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -15,8 +17,9 @@ class CreditWallet(Base):
 
     __tablename__ = "credit_wallet"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
+    account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     status_id = Column(SmallInteger, ForeignKey(CreditWalletStatus.id), nullable=False)
     total_limit = Column(BigInteger, nullable=False)
     used_limit = Column(BigInteger, nullable=False)
@@ -29,6 +32,7 @@ class CreditWallet(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     status = relationship("CreditWalletStatus", foreign_keys=[status_id], lazy="selectin")
+    account = relationship("Account", foreign_keys=[account_id], lazy="select")
     status_events = relationship(
         "CreditWalletStatusEvent", back_populates="credit_wallet", order_by="CreditWalletStatusEvent.id", lazy="select"
     )

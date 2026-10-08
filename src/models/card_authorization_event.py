@@ -1,5 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Identity, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity, String
 from sqlalchemy.orm import relationship
 
 from models.base import Base
@@ -26,7 +25,7 @@ class CardAuthorizationEvent(Base):
     PARTIAL_REFUND = "PARTIAL_REFUND"
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
-    card_authorization_id = Column(UUID(as_uuid=True), ForeignKey("card_authorization.id"), nullable=False)
+    card_authorization_id = Column(BigInteger, ForeignKey("card_authorization.id"), nullable=False)
     type = Column(String, nullable=False)
     amount = Column(BigInteger, nullable=False)
     external_id = Column(String)

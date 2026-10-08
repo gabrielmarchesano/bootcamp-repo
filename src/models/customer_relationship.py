@@ -1,5 +1,5 @@
-from sqlalchemy import Column, DateTime, String, func
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, func
+from sqlalchemy.orm import relationship
 
 from models.base import Base
 
@@ -16,14 +16,17 @@ class CustomerRelationship(Base):
 
     __tablename__ = "customer_relationship"
 
-    # Papéis (classificação: texto + CHECK no banco)
+    # Papéis (tipo enum_relationship_role no banco)
     PARTNER = "PARTNER"
     ADMINISTRATOR = "ADMINISTRATOR"
     ATTORNEY = "ATTORNEY"
 
-    legal_customer_id = Column(UUID(as_uuid=True), primary_key=True)
+    legal_customer_id = Column(BigInteger, ForeignKey("customer.id"), primary_key=True)
     legal_person_type = Column(String, nullable=False, server_default="LEGAL")
-    natural_customer_id = Column(UUID(as_uuid=True), primary_key=True)
+    natural_customer_id = Column(BigInteger, ForeignKey("customer.id"), primary_key=True)
     natural_person_type = Column(String, nullable=False, server_default="NATURAL")
     role = Column(String, primary_key=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+    legal_customer = relationship("Customer", foreign_keys=[legal_customer_id], lazy="selectin")
+    natural_customer = relationship("Customer", foreign_keys=[natural_customer_id], lazy="selectin")

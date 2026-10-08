@@ -14,8 +14,28 @@ class TransferRepository:
         self.session = context.db_session
         self.enumerators = EnumeratorRepository(context)
 
-    def get_by_id(self, transfer_id: UUID) -> Transfer:
-        return self.session.query(Transfer).filter(Transfer.id == transfer_id).first()
+    def get_by_key(self, transfer_key: UUID) -> Transfer:
+        return self.session.query(Transfer).filter(Transfer.key == transfer_key).first()
+
+    def list_scheduled_due(self, day) -> List[Transfer]:
+        """TEDs agendadas para `day` (ou antes, se o job perdeu um dia)."""
+        return (
+            self.session.query(Transfer)
+            .join(Transfer.status)
+            .filter(TransferStatus.enumerator == TransferStatus.SCHEDULED, Transfer.scheduled_for <= day)
+            .order_by(Transfer.id)
+            .all()
+        )
+
+    def list_sent_before(self, moment) -> List[Transfer]:
+        """Pix e TED em SENT sem retorno do trilho desde antes de `moment`."""
+        return (
+            self.session.query(Transfer)
+            .join(Transfer.status)
+            .filter(TransferStatus.enumerator == TransferStatus.SENT, Transfer.updated_at <= moment)
+            .order_by(Transfer.id)
+            .all()
+        )
 
     def get_by_idempotency_key(self, idempotency_key: str) -> Transfer:
         return self.session.query(Transfer).filter(Transfer.idempotency_key == idempotency_key).first()
@@ -120,7 +140,7 @@ class TransferRepository:
             transfer.completed_at = func.now()
         self._record_status_event(transfer, old_status, transfer.status, reason)
  
-    def reversed_total(self, incoming_transfer_id: UUID) -> int:
+    def reversed_total(self, incoming_transfer_id: int) -> int:
         """Quanto já saiu (ou está saindo) em devolução desta entrada.
  
         Conta tudo que não morreu: devolução REJECTED/FAILED/CANCELED não
@@ -165,7 +185,7 @@ class TransferRepository:
         """
         return self.session.execute(text("SELECT now() AT TIME ZONE 'America/Sao_Paulo'")).scalar_one()
 
-    def outflow_since(self, account_id: UUID, local_window_start: datetime) -> int:
+    def outflow_since(self, account_id: int, local_window_start: datetime) -> int:
         """Soma das saídas da conta desde o início da janela noturna (hora local)."""
         return self.session.execute(
             text(
@@ -183,7 +203,7 @@ class TransferRepository:
         ).scalar_one()
 
     def list_by_account(
-        self, account_id: UUID, statuses: List[str], limit: int, after: Optional[Tuple[datetime, str]]
+        self, account_id: int, statuses: List[str], limit: int, after: Optional[Tuple[datetime, str]]
     ) -> List[Transfer]:
         """Transferências em que a conta é origem OU destino, mais novas primeiro."""
         query = self.session.query(Transfer).filter(
@@ -196,7 +216,7 @@ class TransferRepository:
 
         if after is not None:
             after_created_at, after_id = after
-            query = query.filter(tuple_(Transfer.created_at, Transfer.id) < tuple_(after_created_at, UUID(after_id)))
+            query = query.filter(tuple_(Transfer.created_at, Transfer.id) < tuple_(after_created_at, int(after_id)))
 
         query = query.order_by(Transfer.created_at.desc(), Transfer.id.desc())
 

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import List, Optional
 
 from sqlalchemy import func
 
@@ -64,6 +64,20 @@ class CardAuthorizationRepository:
             authorization.status,
             reason,
         )
+
+    def list_expired_authorization_ids(self) -> List[str]:
+        """authorization_id das APPROVED com expires_at já passado (job expire_authorizations)."""
+        rows = (
+            self.session.query(CardAuthorization.authorization_id)
+            .join(CardAuthorization.status)
+            .filter(
+                CardAuthorizationStatus.enumerator == CardAuthorizationStatus.APPROVED,
+                CardAuthorization.expires_at <= func.now(),
+            )
+            .order_by(CardAuthorization.id)
+            .all()
+        )
+        return [row.authorization_id for row in rows]
 
     def get_event(self, event_type: str, external_id: str) -> Optional[CardAuthorizationEvent]:
         return (
