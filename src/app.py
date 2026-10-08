@@ -159,6 +159,15 @@ def create_app() -> FastAPI:
     application.add_api_route("/customers", customer_resource.on_post, methods=["POST"])
     application.add_api_route("/customers/{customer_id}", customer_resource.on_get_by_id, methods=["GET"])
     application.add_api_route("/customers/{customer_id}", customer_resource.on_patch_by_id, methods=["PATCH"])
+    application.add_api_route(
+        "/customers/{customer_id}/accounts", customer_resource.on_post_account, methods=["POST"]
+    )
+    application.add_api_route(
+        "/customers/{customer_id}/accounts", customer_resource.on_get_accounts, methods=["GET"]
+    )
+    application.add_api_route(
+        "/customers/{customer_id}/relationships", customer_resource.on_post_relationship, methods=["POST"]
+    )
     application.add_api_route("/accounts/{account_id}", account_resource.on_get_by_id, methods=["GET"])
     application.add_api_route("/accounts/{account_id}/status", account_resource.on_patch_status, methods=["PATCH"])
     application.add_api_route("/accounts/{account_id}/statement", account_resource.on_get_statement, methods=["GET"])

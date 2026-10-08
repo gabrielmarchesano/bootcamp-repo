@@ -23,8 +23,8 @@ from utils.ids import parse_uuid
 from utils.pix import detect_key_type, generate_end_to_end_id, mask_document
 
 # Regulamento Pix: até 5 chaves por conta de pessoa física, 20 de pessoa jurídica.
-# MEI tem CNPJ, então conta como pessoa jurídica.
-KEY_LIMIT = {Customer.INDIVIDUAL: 5, Customer.MEI: 20}
+# No v7 o teto é por person_type do titular (NATURAL/LEGAL).
+KEY_LIMIT = {Customer.NATURAL: 5, Customer.LEGAL: 20}
 
 # Por quanto tempo o end_to_end_id de uma consulta vale para um Pix.
 # A QI não publica o número; 15 minutos é premissa do time.
@@ -58,7 +58,7 @@ class PixKeyController(BaseController):
         key_type = payload["key_type"]
         key_value = self._key_value(account, key_type, payload.get("key_value"))
 
-        limit = KEY_LIMIT[account.customer.type]
+        limit = KEY_LIMIT[account.customer.person_type]
         if len(self.pix_key_repository.list_active(account.id)) >= limit:
             raise PixKeyLimitReached(limit)
 
@@ -140,7 +140,11 @@ class PixKeyController(BaseController):
     def _own_key_data(self, own_key: PixKey) -> dict:
         destination = own_key.account
         customer = destination.customer
-        document = customer.cnpj if customer.type == Customer.MEI else customer.cpf
+        # v7: `document` já é CPF (NATURAL) ou CNPJ (LEGAL). O person_type
+        # do DICT segue o person_type do titular.
+        owner_person_type = (
+            PixKeyInquiry.LEGAL if customer.person_type == Customer.LEGAL else PixKeyInquiry.NATURAL
+        )
 
         return {
             "ispb": OWN_ISPB,
@@ -149,8 +153,8 @@ class PixKeyController(BaseController):
             "account_digit": None,
             "account_type": PixKeyInquiry.CHECKING,
             "owner_name": customer.name,
-            "owner_masked_document": mask_document(document),
-            "owner_person_type": PixKeyInquiry.LEGAL if customer.type == Customer.MEI else PixKeyInquiry.NATURAL,
+            "owner_masked_document": mask_document(customer.document),
+            "owner_person_type": owner_person_type,
             "destination_account_id": destination.id,
         }
 
@@ -163,10 +167,9 @@ class PixKeyController(BaseController):
         if key_value is None:
             raise InvalidParameter(f"key_value is required for key_type {key_type}")
 
-        if key_type == PixKey.CPF and key_value != customer.cpf:
-            raise PixKeyNotOwned(key_type)
-
-        if key_type == PixKey.CNPJ and key_value != customer.cnpj:
+        # v7: a chave CPF/CNPJ precisa ser o `document` do próprio titular
+        # (QIT001041). O document já é CPF ou CNPJ conforme o person_type.
+        if key_type in (PixKey.CPF, PixKey.CNPJ) and key_value != customer.document:
             raise PixKeyNotOwned(key_type)
 
         if detect_key_type(key_value) != key_type:

@@ -1,0 +1,15 @@
+{
+  "title": "GetWalletInvoices",
+  "description": "Faturas da carteira, com filtro opcional por status (repetível: ?status=OPEN&status=FUTURE).",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "enum": ["OPEN", "CLOSED", "PARTIALLY_PAID", "PAID", "OVERDUE", "FUTURE"]
+      }
+    }
+  },
+  "additionalProperties": false
+}

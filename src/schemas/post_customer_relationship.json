@@ -1,0 +1,17 @@
+{
+  "title": "PostCustomerRelationship",
+  "description": "Vínculo entre a PJ (titular do path, lado legal) e uma PF (lado natural).",
+  "type": "object",
+  "properties": {
+    "natural_customer_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "role": {
+      "enum": ["PARTNER", "ADMINISTRATOR", "ATTORNEY"]
+    }
+  },
+  "required": ["natural_customer_id", "role"],
+  "additionalProperties": false
+}

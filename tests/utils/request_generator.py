@@ -33,6 +33,30 @@ class RequestGenerator:
         return response.response_status, response.response_json
 
     @staticmethod
+    def POST_customer_account(customer_id: str):
+        response = ClientRequisition.send(
+            "POST", f"/customers/{customer_id}/accounts", headers={"INTERNAL-TOKEN": INTERNAL_TOKEN}
+        )
+        return response.response_status, response.response_json
+
+    @staticmethod
+    def GET_customer_accounts(customer_id: str):
+        response = ClientRequisition.send(
+            "GET", f"/customers/{customer_id}/accounts", headers={"INTERNAL-TOKEN": INTERNAL_TOKEN}
+        )
+        return response.response_status, response.response_json
+
+    @staticmethod
+    def POST_customer_relationship(customer_id: str, payload: dict):
+        response = ClientRequisition.send(
+            "POST",
+            f"/customers/{customer_id}/relationships",
+            payload=payload,
+            headers={"INTERNAL-TOKEN": INTERNAL_TOKEN},
+        )
+        return response.response_status, response.response_json
+
+    @staticmethod
     def GET_account(account_id: str):
         response = ClientRequisition.send(
             "GET", f"/accounts/{account_id}", headers={"INTERNAL-TOKEN": INTERNAL_TOKEN}

@@ -10,36 +10,54 @@ class PayloadGenerator:
 
     @staticmethod
     def create_customer_payload(
-        customer_type: str = "INDIVIDUAL",
-        cpf: str = None,
-        cnpj: str = None,
+        person_type: str = "NATURAL",
+        document: str = None,
         birth_date: str = "1990-05-17",
         annual_revenue: int = 12_000_000,
         is_pep: bool = None,
+        legal_nature: str = None,
+        owner_customer_id: str = None,
     ) -> dict:
-        """Um cadastro válido. MEI ganha CNPJ sozinho; INDIVIDUAL fica sem.
+        """Um cadastro de titular v7 válido.
 
-        Documentos saem só com dígitos — é o formato que a API de cliente
-        aceita.
+        NATURAL leva CPF + birth_date; LEGAL leva CNPJ + legal_nature (e,
+        quando EI, owner_customer_id apontando para a PF dona). Documentos
+        saem só com dígitos — é o formato que a API de titular aceita.
         """
-        if cpf is None:
-            cpf = RandomGenerator.generate_cpf_digits()
-
         payload = {
-            "cpf": cpf,
+            "person_type": person_type,
             "name": "Maria da Silva",
-            "birth_date": birth_date,
-            "type": customer_type,
             "annual_revenue": annual_revenue,
         }
 
-        if customer_type == "MEI":
-            payload["cnpj"] = cnpj if cnpj is not None else RandomGenerator.generate_cnpj_digits()
-
-        if is_pep is not None:
-            payload["is_pep"] = is_pep
+        if person_type == "NATURAL":
+            payload["document"] = document if document is not None else RandomGenerator.generate_cpf_digits()
+            payload["birth_date"] = birth_date
+            if is_pep is not None:
+                payload["is_pep"] = is_pep
+        else:
+            payload["document"] = document if document is not None else RandomGenerator.generate_cnpj_digits()
+            payload["legal_nature"] = legal_nature if legal_nature is not None else "LTDA"
+            if owner_customer_id is not None:
+                payload["owner_customer_id"] = owner_customer_id
 
         return payload
+
+    @staticmethod
+    def create_legal_customer_payload(
+        legal_nature: str = "LTDA",
+        document: str = None,
+        annual_revenue: int = 12_000_000,
+        owner_customer_id: str = None,
+    ) -> dict:
+        """Atalho para um titular LEGAL (SLU/LTDA/EI)."""
+        return PayloadGenerator.create_customer_payload(
+            person_type="LEGAL",
+            document=document,
+            annual_revenue=annual_revenue,
+            legal_nature=legal_nature,
+            owner_customer_id=owner_customer_id,
+        )
 
     @staticmethod
     def create_tef_payload(source_account_id: str, destination_account_id: str, amount: int) -> dict:

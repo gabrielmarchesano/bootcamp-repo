@@ -8,14 +8,14 @@ class ObjectGenerator:
     # ════════════════════════════════════════════════════════════════
 
     @staticmethod
-    def create_active_account(customer_type: str = "INDIVIDUAL", initial_balance: int = 0) -> dict:
+    def create_active_account(person_type: str = "NATURAL", initial_balance: int = 0) -> dict:
         """Cliente novo com conta ACTIVE e, se pedido, saldo inicial via PIX recebido.
 
         O saldo entra pelo webhook do SPI — o mesmo caminho do dinheiro de
         verdade. Não existe atalho de "depósito" na API, e o teste não
         inventa um.
         """
-        payload = PayloadGenerator.create_customer_payload(customer_type=customer_type)
+        payload = PayloadGenerator.create_customer_payload(person_type=person_type)
 
         status, customer = RequestGenerator.POST_customer(payload)
         assert status == 201, customer

@@ -28,3 +28,24 @@ class CustomerResource:
         customer = controller.update_revenue(customer_id, payload["annual_revenue"])
 
         return JSONResponse(content=jsonable_encoder(customer), status_code=http_status.HTTP_200_OK)
+
+    def on_post_account(self, customer_id: str) -> JSONResponse:
+        """Abre uma conta adicional para um titular que já existe (v7)."""
+        controller = CustomerController()
+        account = controller.open_account(customer_id)
+
+        return JSONResponse(content=jsonable_encoder(account), status_code=http_status.HTTP_201_CREATED)
+
+    def on_get_accounts(self, customer_id: str) -> JSONResponse:
+        controller = CustomerController()
+        accounts = controller.list_accounts(customer_id)
+
+        return JSONResponse(content=jsonable_encoder(accounts), status_code=http_status.HTTP_200_OK)
+
+    @SchemaHandler.validate("post_customer_relationship.json")
+    def on_post_relationship(self, customer_id: str, payload: dict) -> JSONResponse:
+        """Cria um vínculo PARTNER/ADMINISTRATOR/ATTORNEY (PJ -> PF)."""
+        controller = CustomerController()
+        relationship = controller.create_relationship(customer_id, payload)
+
+        return JSONResponse(content=jsonable_encoder(relationship), status_code=http_status.HTTP_201_CREATED)

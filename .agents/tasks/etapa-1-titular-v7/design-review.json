@@ -1,0 +1,54 @@
+{
+  "verdict": "CHANGES_REQUESTED",
+  "findings": [
+    {
+      "id": 1,
+      "severity": "HIGH",
+      "title": "TransferController._pix_manual_fields reads removed v6 attributes (holder.cnpj/.cpf/.type/Customer.MEI); propagation audit misclassifies it as 'nao muda'",
+      "location": "design.md s1.2 propagation bullet 4 and s1.8; src/controllers/transfer_controller.py _pix_manual_fields (~line 143)",
+      "problem": "s1.2 lists _pix_manual_fields as N:1 'nao muda' and s1.8 only rewrites the three current_fee(..., source.customer.type) calls. But _pix_manual_fields validates the destination document with 'holder.cnpj if holder.type == Customer.MEI else holder.cpf' - three attributes (cnpj, cpf, type) plus Customer.MEI that s1.2 removes from the model. This path will AttributeError (500) on every manual Pix to an on-us destination and is covered by no section.",
+      "fix": "Add an explicit item (s1.8a) rewriting the check to v7: 'holder = destination.customer; if target[\"document\"] != holder.document: raise InvalidTargetAccount(...)'. document is unique per holder so the MEI/INDIVIDUAL branch collapses. Correct the s1.2 bullet 4 wording: cardinality unchanged but the vocabulary reads inside _pix_manual_fields DO change."
+    },
+    {
+      "id": 2,
+      "severity": "MEDIUM",
+      "title": "PATCH update_revenue repository/controller coupling under-specified; partial edit breaks the PATCH path",
+      "location": "design.md s1.5 (update_revenue 'espelha a sequencia'); src/controllers/customer_controller.py update_revenue; src/repositories/customer_repository.py update_revenue",
+      "problem": "The create() sequence is written verbatim but update_revenue is only given 'by analogy'. Repository must drop the microcredit_eligible param AND stop writing the GENERATED column, and the controller must drop both MICROCREDIT_REVENUE_CAP computations and the extra positional arg. If only one half lands: TypeError (arity) or IntegrityError/500 (writing a GENERATED column).",
+      "fix": "Write the update_revenue controller+repository sequence verbatim like create(): repo signature update_revenue(customer, annual_revenue) with no microcredit_eligible, no write to microcredit_eligible/fee_segment/exposure_customer_id; controller: _get_customer_or_raise -> repo.update_revenue(customer, annual_revenue) -> flush -> refresh([microcredit_eligible, fee_segment, exposure_customer_id]) -> commit -> obj_to_dict. State the arity change and call-site change ship together, and confirm MICROCREDIT_REVENUE_CAP is deleted."
+    },
+    {
+      "id": 3,
+      "severity": "MEDIUM",
+      "title": "Test-harness fan-out (create_customer_payload -> every customer_type= caller) acknowledged but left unspecified, including the MEI -> (NATURAL owner + LEGAL/EI) two-step",
+      "location": "design.md Testabilidade/Harness; tests/utils/payload_generator.py create_customer_payload; tests/utils/object_generator.py create_active_account",
+      "problem": "create_customer_payload emits v6 (cpf/cnpj/type) and object_generator.create_active_account threads customer_type straight into it; the whole integration suite opens accounts through this one factory. The design says 'implementer should check and update' with no concrete new signature - inconsistent with the design's own standard of pinning signatures everywhere else. It also does not call out that a v6 MEI maps to TWO v7 customers (a NATURAL owner_customer_id + a LEGAL/EI), so the factory cannot produce an EI in one payload.",
+      "fix": "Pin the new factory contract: create_customer_payload(person_type='NATURAL', document=None, legal_nature=None, owner_customer_id=None, birth_date=..., annual_revenue=..., is_pep=None). Give the migration rule: INDIVIDUAL->NATURAL; MEI-> a dedicated EI helper that first creates a NATURAL owner then returns LEGAL+legal_nature=EI+owner_customer_id. Name the files (payload_generator.py, object_generator.py) and the caller grep (create_active_account(customer_type=)."
+    },
+    {
+      "id": 4,
+      "severity": "NIT",
+      "title": "obj_to_dict birth_date.isoformat() unconditional; nullable handling covered in prose but not restated in the GET-shape key list",
+      "location": "design.md s1.5 DTO; src/dtos/customer_dto.py obj_to_dict",
+      "problem": "obj_to_dict currently does customer.birth_date.isoformat() which None.isoformat()-crashes for LEGAL. s1.5 prose says make it nullable, but the explicit GET key list does not re-list birth_date, so an implementer editing the key list could miss the one existing line.",
+      "fix": "Add birth_date (nullable: '... if customer.birth_date else None') to the explicit GET key list, not only the prose."
+    },
+    {
+      "id": 5,
+      "severity": "NIT",
+      "title": "Embedded accounts list omits created_at used for ordering; confirm no Fluxo-1 test reads it from the customer GET body",
+      "location": "design.md s1.5 DTO (embedded accounts projection)",
+      "problem": "The thin accounts projection {account_id, branch, account_number, status, status_reason} omits created_at while ordering by it. Defensible, but unconfirmed that no existing Fluxo-1 test asserts created_at inside the customer GET body (the dedicated accounts endpoint does carry it).",
+      "fix": "Add a line confirming no customer-GET test reads created_at, or include it in the thin projection if one does."
+    },
+    {
+      "id": 6,
+      "severity": "NIT",
+      "title": "check_kyc param is named cpf; design says it 'passa a receber document' - readability trap, no behavior change",
+      "location": "design.md s1.5 step 4 / D-KYC-PJ; src/utils/kyc_mock.py check_kyc(cpf)",
+      "problem": "The D-KYC-PJ reasoning (CNPJ never matches the 11-digit KYC_REJECTED_CPFS, so PJ auto-approves) is correct and verified, but calling check_kyc(document) against a param still named cpf is a readability trap.",
+      "fix": "One sentence: either rename the mock param to document (pure rename, no logic change) or explicitly flag the name mismatch as accepted debt."
+    }
+  ],
+  "reviewDoc": "c:\\Users\\Gustavo\\Desktop\\RFC\\bootcamp-repo\\.worktrees\\etapa-1-titular-v7\\.agents\\tasks\\etapa-1-titular-v7\\design-review.md"
+}

@@ -1,0 +1,17 @@
+{
+  "title": "PostPixReversal",
+  "description": "Devolução de um Pix recebido. O valor não pode ultrapassar o que foi recebido (conferido no controller).",
+  "type": "object",
+  "properties": {
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "reversal_reason": {
+      "enum": ["CLIENT_REQUEST", "RECONCILIATION"]
+    }
+  },
+  "required": ["amount", "reversal_reason"],
+  "additionalProperties": false
+}

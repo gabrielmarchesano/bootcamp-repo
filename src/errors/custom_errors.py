@@ -575,3 +575,61 @@ class InvalidScheduleDate(QIException):
         description = "schedule_date must be a business day after today."
         translation = "A data de agendamento precisa ser um dia útil depois de hoje."
         super().__init__(title, self.code, http_status, description, translation)
+
+
+# ════════════════════════════════════════════════════════════════════
+# Etapa 1 — titular v7
+# ════════════════════════════════════════════════════════════════════
+
+
+class InvalidEiOwner(QIException):
+    """O dono de um EI (empresário individual) tem de ser pessoa natural.
+
+    O v7 modela o EI/MEI como um CNPJ (LEGAL) cujo patrimônio é o da
+    pessoa física que o abriu (owner_customer_id -> NATURAL). Apontar o
+    dono para uma PJ quebra essa premissa.
+    """
+
+    code = "QIT001050"
+
+    def __init__(self, owner_customer_id) -> None:
+        title = "Invalid EI owner"
+        http_status = 422
+        description = f"The owner {owner_customer_id} of an EI must be a NATURAL person."
+        translation = "O dono do EI precisa ser uma pessoa física."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class AdditionalAccountNotAllowed(QIException):
+    """Regra de abertura de conta adicional violada (QIT001051).
+
+    O titular precisa estar com o KYC aprovado para que uma conta
+    adicional nasça ACTIVE reaproveitando o status do titular; sem isso,
+    não há conta nova a abrir por esta rota.
+    """
+
+    code = "QIT001051"
+
+    def __init__(self, reason) -> None:
+        title = "Additional account not allowed"
+        http_status = 422
+        description = f"Cannot open an additional account: {reason}."
+        translation = "Não é possível abrir uma conta adicional para este titular."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class InvalidRelationship(QIException):
+    """Regra de vínculo (PARTNER/ADMINISTRATOR/ATTORNEY) violada (QIT001052).
+
+    O lado legal precisa ser LEGAL e o natural NATURAL; o par
+    (legal, natural, role) não pode repetir.
+    """
+
+    code = "QIT001052"
+
+    def __init__(self, reason) -> None:
+        title = "Invalid relationship"
+        http_status = 422
+        description = f"Invalid customer relationship: {reason}."
+        translation = "Vínculo entre titulares inválido."
+        super().__init__(title, self.code, http_status, description, translation)

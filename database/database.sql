@@ -1,5 +1,5 @@
 -- =====================================================================
--- Infra de conta digital + microcrédito — Esquema PostgreSQL (fluxos v6)
+-- Infra de conta digital + microcrédito — Esquema PostgreSQL (fluxos v7)
 -- Bootcamp QI Tech · single-tenant (uma única IF por instalação)
 --
 -- Convenções
@@ -12,6 +12,9 @@
 --   • Ledger imutável e em partidas dobradas (triggers no fim do arquivo).
 --   • Ordem global de lock: account(s) por id → credit_line → loan
 --     → installment → card → invoice.
+--   • Titular (customer) = tomador: um CPF ou um CNPJ. Uma pessoa tem N
+--     titulares (a PF e cada CNPJ) e cada titular tem N contas. Os tetos
+--     de microcrédito agregam por PATRIMÔNIO (exposure_customer_id).
 --
 -- ATENÇÃO: este arquivo NÃO pode conter o caractere de porcentagem.
 -- O tests/utils/db_utils.py roda o arquivo pelo psycopg2, que trata esse
@@ -29,12 +32,13 @@ CREATE TABLE holiday (
 );
 -- Dia útil = não é sábado/domingo e não está em holiday.
 
+-- Segmento de tarifa = customer.fee_segment (coluna gerada).
 CREATE TABLE fee (
-    method          TEXT   NOT NULL CHECK (method IN ('TEF','PIX','TED')),
-    customer_type   TEXT   NOT NULL CHECK (customer_type IN ('INDIVIDUAL','MEI')),
-    amount          BIGINT NOT NULL CHECK (amount >= 0),
-    effective_from  DATE   NOT NULL DEFAULT CURRENT_DATE,
-    PRIMARY KEY (method, customer_type, effective_from)
+    method            TEXT   NOT NULL CHECK (method IN ('TEF','PIX','TED')),
+    customer_segment  TEXT   NOT NULL CHECK (customer_segment IN ('INDIVIDUAL','BUSINESS')),
+    amount            BIGINT NOT NULL CHECK (amount >= 0),
+    effective_from    DATE   NOT NULL DEFAULT CURRENT_DATE,
+    PRIMARY KEY (method, customer_segment, effective_from)
 );
 
 
@@ -141,25 +145,75 @@ INSERT INTO outbox_event_status (id, enumerator) VALUES
 -- ---------------------------------------------------------------------
 -- 1. Cliente e conta
 -- ---------------------------------------------------------------------
+-- Titular de conta = o "tomador" da Res. CMN 4.854: um CPF OU um CNPJ.
+-- A pessoa natural e cada CNPJ dela são linhas distintas. Porte (MEI, ME,
+-- EPP) NÃO é modelado: muda por lei e é derivado do faturamento. O que
+-- importa para as regras é a natureza jurídica (quem responde pela dívida)
+-- e o faturamento (quem é elegível).
 CREATE TABLE customer (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    cpf                    CHAR(11)  NOT NULL UNIQUE,
-    name                   TEXT      NOT NULL,
-    birth_date             DATE      NOT NULL,
-    type                   TEXT      NOT NULL CHECK (type IN ('INDIVIDUAL','MEI')),
-    cnpj                   CHAR(14)  UNIQUE,
-    annual_revenue         BIGINT    NOT NULL CHECK (annual_revenue >= 0),
-    revenue_reference_date DATE      NOT NULL DEFAULT CURRENT_DATE,
-    microcredit_eligible   BOOLEAN   NOT NULL,
-    kyc_status_id          SMALLINT  NOT NULL REFERENCES kyc_status(id),
-    is_pep                 BOOLEAN   NOT NULL DEFAULT FALSE,
+    person_type            TEXT NOT NULL CHECK (person_type IN ('NATURAL','LEGAL')),  -- vocabulário do DICT
+    document               VARCHAR(14) NOT NULL UNIQUE,   -- CPF (11) ou CNPJ (14), só dígitos
+    name                   TEXT NOT NULL,                 -- nome civil ou razão social
+    birth_date             DATE,                          -- só NATURAL
+    -- Só LEGAL. EI = empresário individual, INCLUI o MEI (MEI é EI no SIMEI).
+    -- SLU e LTDA são sociedades: patrimônio próprio. Ampliar por migração.
+    legal_nature           TEXT CHECK (legal_nature IN ('EI','SLU','LTDA')),
+    -- Só EI: a pessoa natural que É este CNPJ. EI/MEI não tem personalidade
+    -- jurídica distinta; patrimônio único com a PF (jurisprudência do STJ).
+    owner_customer_id      UUID,
+    owner_person_type      TEXT CHECK (owner_person_type = 'NATURAL'),  -- alvo fixo da FK composta
+    -- Quem responde pela dívida com o próprio patrimônio: a PF para ela
+    -- mesma e para o EI/MEI dela; a sociedade para si. Tetos agregam aqui.
+    exposure_customer_id   UUID GENERATED ALWAYS AS (COALESCE(owner_customer_id, id)) STORED,
+    -- Pix gratuito para pessoa natural, inclusive empresário individual
+    -- (Res. BCB 19/2020): EI/MEI tarifa como PF; sociedade tarifa como PJ.
+    fee_segment            TEXT GENERATED ALWAYS AS (
+                               CASE WHEN person_type = 'NATURAL' OR legal_nature = 'EI'
+                                    THEN 'INDIVIDUAL' ELSE 'BUSINESS' END) STORED,
+    annual_revenue         BIGINT NOT NULL CHECK (annual_revenue >= 0),  -- renda (PF) ou receita bruta (PJ)
+    revenue_reference_date DATE NOT NULL DEFAULT CURRENT_DATE,
+    -- Res. CMN 4.854 art. 2º: renda ou receita bruta até o teto de
+    -- microempresa (LC 123/2006: R$ 360.000,00). Vale para PF e PJ.
+    microcredit_eligible   BOOLEAN GENERATED ALWAYS AS (annual_revenue <= 36000000) STORED,
+    kyc_status_id          SMALLINT NOT NULL REFERENCES kyc_status(id),
+    is_pep                 BOOLEAN NOT NULL DEFAULT FALSE,  -- só NATURAL; PJ herda dos sócios
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ck_mei_cnpj CHECK ((type = 'MEI') = (cnpj IS NOT NULL)),
-    -- Elegibilidade: faturamento ≤ R$ 360.000,00 (defesa em profundidade)
-    CONSTRAINT ck_eligibility CHECK (
-        NOT microcredit_eligible OR annual_revenue <= 36000000)
+    CONSTRAINT ux_customer_person_type UNIQUE (id, person_type),         -- alvo das FKs compostas
+    CONSTRAINT ux_customer_exposure    UNIQUE (id, exposure_customer_id),
+    CONSTRAINT ck_document CHECK (
+        (person_type = 'NATURAL' AND document ~ '^[0-9]{11}$')
+     OR (person_type = 'LEGAL'   AND document ~ '^[0-9]{14}$')),
+    CONSTRAINT ck_fields_by_person_type CHECK (
+        (person_type = 'NATURAL') = (birth_date IS NOT NULL)
+        AND (person_type = 'LEGAL') = (legal_nature IS NOT NULL)),
+    CONSTRAINT ck_pep_natural CHECK (NOT is_pep OR person_type = 'NATURAL'),
+    CONSTRAINT ck_ei_owner CHECK (
+        (legal_nature IS NOT DISTINCT FROM 'EI') = (owner_customer_id IS NOT NULL)
+        AND (owner_customer_id IS NULL) = (owner_person_type IS NULL)),
+    -- o dono do EI é sempre uma pessoa natural
+    CONSTRAINT fk_ei_owner FOREIGN KEY (owner_customer_id, owner_person_type)
+        REFERENCES customer (id, person_type)
 );
+CREATE INDEX ix_customer_owner ON customer (owner_customer_id) WHERE owner_customer_id IS NOT NULL;
+
+-- Quem opera a conta PJ além do titular do EI: sócios e administradores
+-- de sociedade, procuradores de qualquer PJ. Liga PJ → PF.
+CREATE TABLE customer_relationship (
+    legal_customer_id     UUID NOT NULL,
+    legal_person_type     TEXT NOT NULL DEFAULT 'LEGAL'   CHECK (legal_person_type = 'LEGAL'),
+    natural_customer_id   UUID NOT NULL,
+    natural_person_type   TEXT NOT NULL DEFAULT 'NATURAL' CHECK (natural_person_type = 'NATURAL'),
+    role                  TEXT NOT NULL CHECK (role IN ('PARTNER','ADMINISTRATOR','ATTORNEY')),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (legal_customer_id, natural_customer_id, role),
+    CONSTRAINT fk_relationship_legal FOREIGN KEY (legal_customer_id, legal_person_type)
+        REFERENCES customer (id, person_type),
+    CONSTRAINT fk_relationship_natural FOREIGN KEY (natural_customer_id, natural_person_type)
+        REFERENCES customer (id, person_type)
+);
+CREATE INDEX ix_customer_relationship_natural ON customer_relationship (natural_customer_id);
 
 -- Número de conta sequencial (8 dígitos), agência fixa 0001
 CREATE SEQUENCE account_number_seq START 1;
@@ -167,7 +221,7 @@ CREATE SEQUENCE account_number_seq START 1;
 CREATE TABLE account (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     type             TEXT NOT NULL CHECK (type IN ('CUSTOMER','INTERNAL')),
-    customer_id      UUID NOT NULL REFERENCES customer(id),
+    customer_id      UUID REFERENCES customer(id),  -- NULL só em INTERNAL; N contas por titular
     internal_code    TEXT UNIQUE,  -- só para contas INTERNAL
     branch           CHAR(4),
     number           TEXT UNIQUE,
@@ -184,9 +238,11 @@ CREATE TABLE account (
              AND balance IS NOT NULL AND held_balance IS NOT NULL
              AND held_balance >= 0 AND number IS NOT NULL)
      OR (type = 'INTERNAL' AND customer_id IS NULL AND internal_code IS NOT NULL
-             AND balance IS NULL AND held_balance IS NULL))
+             AND balance IS NULL AND held_balance IS NULL)),
+    CONSTRAINT ux_account_customer UNIQUE (id, customer_id)  -- alvo da FK composta do loan
     -- Sem CHECK balance >= 0: captura mandatória de débito pode negativar (regra da IF).
 );
+CREATE INDEX ix_account_customer ON account (customer_id) WHERE customer_id IS NOT NULL;
 
 CREATE TABLE account_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -236,17 +292,26 @@ CREATE INDEX ix_ledger_reference ON ledger_entry (reference_type, reference_id);
 -- ---------------------------------------------------------------------
 -- 3. Microcrédito
 -- ---------------------------------------------------------------------
--- Linha vigente (1 por conta, mutável sob FOR UPDATE)
+-- Linha vigente: 1 por PATRIMÔNIO (não por conta, não por CNPJ), mutável
+-- sob FOR UPDATE. A PF e o EI/MEI dela dividem a mesma linha; sociedade
+-- tem a sua. Como total_limit ≤ R$ 21 mil e available_limit só cai na
+-- contratação, o teto do art. 3º V (saldo do tomador na mesma IF) sai do
+-- próprio lock: contratações concorrentes do mesmo patrimônio disputam
+-- esta linha, mesmo vindo de contas ou CNPJs diferentes.
 CREATE TABLE credit_line (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id              UUID NOT NULL UNIQUE REFERENCES account(id),
+    customer_id             UUID NOT NULL UNIQUE,   -- raiz do patrimônio (id = exposure_customer_id)
     version                 INT  NOT NULL DEFAULT 1 CHECK (version >= 1),
     total_limit             BIGINT NOT NULL CHECK (total_limit > 0 AND total_limit <= 2100000),
     available_limit         BIGINT NOT NULL CHECK (available_limit >= 0),
     monthly_interest_rate   NUMERIC(9,6) NOT NULL CHECK (monthly_interest_rate > 0 AND monthly_interest_rate <= 0.04),
     origination_fee_rate    NUMERIC(9,6) NOT NULL CHECK (origination_fee_rate >= 0 AND origination_fee_rate <= 0.03),  -- TAC
     updated_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ck_limit CHECK (available_limit <= total_limit)
+    CONSTRAINT ck_limit CHECK (available_limit <= total_limit),
+    CONSTRAINT ux_credit_line_customer UNIQUE (id, customer_id),  -- alvo da FK composta do loan
+    -- só a raiz do patrimônio tem linha: EI/MEI usa a linha do dono
+    CONSTRAINT fk_credit_line_root FOREIGN KEY (customer_id, customer_id)
+        REFERENCES customer (id, exposure_customer_id)
 );
 
 -- Histórico append-only de cada PUT da IF (auditoria)
@@ -261,9 +326,15 @@ CREATE TABLE credit_line_version (
 );
 
 -- Contrato de microcrédito
+-- Três papéis, três colunas:
+--   • customer_id          tomador: o CPF ou CNPJ que assina (é o que vai ao SCR)
+--   • account_id           conta do tomador que recebe o desembolso e paga
+--   • exposure_customer_id patrimônio que responde (= dono da credit_line)
 CREATE TABLE loan (
     id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    account_id                  UUID NOT NULL REFERENCES account(id),
+    account_id                  UUID NOT NULL,
+    customer_id                 UUID NOT NULL,
+    exposure_customer_id        UUID NOT NULL,
     credit_line_id              UUID NOT NULL,
     credit_line_version         INT  NOT NULL,
     idempotency_key             TEXT NOT NULL UNIQUE,
@@ -285,10 +356,20 @@ CREATE TABLE loan (
     paid_off_at                 TIMESTAMPTZ,
     FOREIGN KEY (credit_line_id, credit_line_version)
         REFERENCES credit_line_version (credit_line_id, version),
+    -- a conta é do tomador
+    CONSTRAINT fk_loan_account FOREIGN KEY (account_id, customer_id)
+        REFERENCES account (id, customer_id),
+    -- o patrimônio é o do tomador (PF → ela; EI/MEI → o dono; sociedade → ela)
+    CONSTRAINT fk_loan_exposure FOREIGN KEY (customer_id, exposure_customer_id)
+        REFERENCES customer (id, exposure_customer_id),
+    -- a linha é a desse patrimônio
+    CONSTRAINT fk_loan_credit_line FOREIGN KEY (credit_line_id, exposure_customer_id)
+        REFERENCES credit_line (id, customer_id),
     CONSTRAINT ck_net_amount CHECK (net_amount = principal_amount - origination_fee_amount),
     CONSTRAINT ck_paid_off CHECK ((status_id = 2) = (paid_off_at IS NOT NULL))  -- 2 = PAID_OFF
 );
-CREATE INDEX ix_loan_account_active ON loan (account_id) WHERE status_id = 1;  -- 1 = ACTIVE
+CREATE INDEX ix_loan_account_active  ON loan (account_id)           WHERE status_id = 1;  -- 1 = ACTIVE
+CREATE INDEX ix_loan_exposure_active ON loan (exposure_customer_id) WHERE status_id = 1;  -- 1 = ACTIVE
 
 CREATE TABLE loan_status_event (
     id              BIGINT   GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -829,12 +910,14 @@ FROM account a LEFT JOIN ledger_entry l ON l.account_id = a.id
 WHERE a.type = 'INTERNAL'
 GROUP BY a.internal_code;
  
--- Saldo de microcrédito por conta (teto R$ 21 mil por instituição)
+-- Saldo de microcrédito por PATRIMÔNIO (Res. CMN 4.854 art. 3º V: teto
+-- R$ 21 mil do tomador na mesma IF). Soma PF + EI/MEI do mesmo CPF e
+-- todas as contas de cada um; sociedade fica sozinha.
 CREATE VIEW vw_microcredit_balance AS
-SELECT l.account_id, SUM(l.outstanding_principal) AS microcredit_balance
+SELECT l.exposure_customer_id, SUM(l.outstanding_principal) AS microcredit_balance
 FROM loan l JOIN loan_status s ON s.id = l.status_id
 WHERE s.enumerator = 'ACTIVE'
-GROUP BY l.account_id;
+GROUP BY l.exposure_customer_id;
  
 -- ---------------------------------------------------------------------
 -- 9. Seeds
@@ -860,10 +943,12 @@ SELECT id, NULL, status_id, 'SEED' FROM account WHERE type = 'INTERNAL';
 -- Tarifas — PREMISSAS DO TIME, ajustar antes da banca:
 --   • TEF R$ 1,00: o bootcamp exige tarifa na transferência; sem ela o
 --     requisito não aparece na demo.
---   • PIX zero: PIX de pessoa natural é gratuito por regra do BCB.
+--   • PIX zero: gratuito para pessoa natural, inclusive empresário
+--     individual e MEI (Res. BCB 19/2020). Para sociedade (BUSINESS) a IF
+--     PODE cobrar; zero aqui é premissa do time.
 --   • TED R$ 10,00.
-INSERT INTO fee (method, customer_type, amount) VALUES
-    ('TEF', 'INDIVIDUAL', 100), ('TEF', 'MEI', 100),
-    ('PIX', 'INDIVIDUAL', 0),   ('PIX', 'MEI', 0),
-    ('TED', 'INDIVIDUAL', 1000), ('TED', 'MEI', 1000);
+INSERT INTO fee (method, customer_segment, amount) VALUES
+    ('TEF', 'INDIVIDUAL', 100),  ('TEF', 'BUSINESS', 100),
+    ('PIX', 'INDIVIDUAL', 0),    ('PIX', 'BUSINESS', 0),
+    ('TED', 'INDIVIDUAL', 1000), ('TED', 'BUSINESS', 1000);
  

@@ -1,0 +1,19 @@
+{
+  "title": "PostCardAuthorizationIncrement",
+  "description": "Autorização incremental (hotel, combustível): mais HOLD na mesma autorização. request_id dá idempotência ao incremento.",
+  "type": "object",
+  "properties": {
+    "request_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    }
+  },
+  "required": ["request_id", "amount"],
+  "additionalProperties": false
+}

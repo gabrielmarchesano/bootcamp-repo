@@ -1,0 +1,90 @@
+{
+  "title": "PostPixTransfer",
+  "description": "Pix de saída. KEY usa o end_to_end_id de uma consulta ao DICT; MANUAL informa a conta de destino (QI target_account). O conjunto de campos de cada tipo é fechado: campo de KEY num corpo MANUAL (e vice-versa) é recusado.",
+  "type": "object",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "pix_transfer_type": {
+          "enum": ["KEY"]
+        },
+        "pix_key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 77
+        },
+        "end_to_end_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000000000
+        },
+        "pix_message": {
+          "type": "string",
+          "maxLength": 140
+        }
+      },
+      "required": ["pix_transfer_type", "pix_key", "end_to_end_id", "amount"],
+      "additionalProperties": false
+    },
+    {
+      "type": "object",
+      "properties": {
+        "pix_transfer_type": {
+          "enum": ["MANUAL"]
+        },
+        "target_account": {
+          "type": "object",
+          "properties": {
+            "ispb": {
+              "type": "string",
+              "pattern": "^\\d{8}$"
+            },
+            "branch": {
+              "type": "string",
+              "pattern": "^\\d{1,4}$"
+            },
+            "number": {
+              "type": "string",
+              "pattern": "^\\d{1,20}$"
+            },
+            "digit": {
+              "type": "string",
+              "pattern": "^\\d$"
+            },
+            "document": {
+              "type": "string",
+              "pattern": "^(\\d{11}|\\d{14})$"
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 255
+            },
+            "account_type": {
+              "enum": ["CHECKING", "SALARY", "SAVINGS", "PAYMENT"]
+            }
+          },
+          "required": ["ispb", "branch", "number", "document", "name", "account_type"],
+          "additionalProperties": false
+        },
+        "amount": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000000000
+        },
+        "pix_message": {
+          "type": "string",
+          "maxLength": 140
+        }
+      },
+      "required": ["pix_transfer_type", "target_account", "amount"],
+      "additionalProperties": false
+    }
+  ]
+}

@@ -161,7 +161,7 @@ class TestPixManual:
         assert status == 422
         assert error["code"] == "QIT001042"
 
-        target["document"] = receiver_customer["cpf"]
+        target["document"] = receiver_customer["document"]
         status, transfer = RequestGenerator.POST_pix_transfer(
             payer["account_id"], PayloadGenerator.create_pix_manual_payload(1_000, target), key()
         )

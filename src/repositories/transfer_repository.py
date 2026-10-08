@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Tuple
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, text, tuple_
 
@@ -86,6 +86,15 @@ class TransferRepository:
         self.session.flush()
         return transfer
  
+    def generate_str_control_number(self) -> str:
+        """Número de controle do STR, único por transferência.
+
+        O trilho de verdade segue um formato próprio; aqui, no mock, basta
+        um identificador único — a coluna só exige UNIQUE, sem CHECK de
+        formato.
+        """
+        return uuid4().hex
+
     def get_by_end_to_end_id(self, end_to_end_id: str) -> Optional[Transfer]:
         return self.session.query(Transfer).filter(Transfer.end_to_end_id == end_to_end_id).first()
  
@@ -127,13 +136,17 @@ class TransferRepository:
             {"incoming_id": incoming_transfer_id},
         ).scalar_one()
 
-    def current_fee(self, method: str, customer_type: str) -> int:
-        """A tarifa vigente hoje: a de `effective_from` mais recente que já começou."""
+    def current_fee(self, method: str, customer_segment: str) -> int:
+        """A tarifa vigente hoje: a de `effective_from` mais recente que já começou.
+
+        `customer_segment` é o `fee_segment` (coluna gerada) do titular:
+        INDIVIDUAL para PF e EI/MEI, BUSINESS para sociedade.
+        """
         fee = (
             self.session.query(Fee)
             .filter(
                 Fee.method == method,
-                Fee.customer_type == customer_type,
+                Fee.customer_segment == customer_segment,
                 Fee.effective_from <= func.current_date(),
             )
             .order_by(Fee.effective_from.desc())

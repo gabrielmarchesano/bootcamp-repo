@@ -28,7 +28,7 @@ class Account(Base):
  
     id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     type = Column(String, nullable=False)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("customer.id"), unique=True)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customer.id"))
     internal_code = Column(String, unique=True)
     branch = Column(CHAR(4))
     number = Column(String, unique=True)
@@ -39,7 +39,7 @@ class Account(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
  
-    customer = relationship("Customer", back_populates="account", lazy="selectin")
+    customer = relationship("Customer", back_populates="accounts", lazy="selectin")
  
     # Na tabela o status é um número; aqui, um objeto com `.enumerator`.
     # "selectin" (consulta separada) e não "joined": o lock da conta usa

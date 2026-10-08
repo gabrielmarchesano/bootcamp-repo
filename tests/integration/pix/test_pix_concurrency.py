@@ -51,7 +51,7 @@ class TestPixConcurrency:
         documents = {}
         for account in (a, b):
             _, customer = RequestGenerator.GET_customer(account["customer_id"])
-            documents[account["account_id"]] = customer["cpf"]
+            documents[account["account_id"]] = customer["document"]
 
         def target_of(account):
             target = PayloadGenerator.target_account(ispb="13370001", document=documents[account["account_id"]])

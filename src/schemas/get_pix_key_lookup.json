@@ -1,0 +1,14 @@
+{
+  "title": "GetPixKeyLookup",
+  "description": "Consulta ao DICT (QI: account_key). O account_id de quem consulta é obrigatório: o end_to_end_id devolvido vale só para essa conta.",
+  "type": "object",
+  "properties": {
+    "account_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    }
+  },
+  "required": ["account_id"],
+  "additionalProperties": false
+}

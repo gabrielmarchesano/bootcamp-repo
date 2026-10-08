@@ -1,0 +1,56 @@
+{
+  "title": "PostCardAuthorization",
+  "description": "Autorização da rede (processadora). Parcelamento (installment_count > 1) só vale no crédito.",
+  "type": "object",
+  "properties": {
+    "authorization_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "card_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "function": {
+      "enum": ["DEBIT", "CREDIT"]
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "installment_count": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 24
+    },
+    "merchant_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "mcc": {
+      "type": "string",
+      "pattern": "^\\d{4}$"
+    }
+  },
+  "required": ["authorization_id", "card_id", "function", "amount"],
+  "additionalProperties": false,
+  "if": {
+    "properties": {
+      "installment_count": {
+        "minimum": 2
+      }
+    },
+    "required": ["installment_count"]
+  },
+  "then": {
+    "properties": {
+      "function": {
+        "enum": ["CREDIT"]
+      }
+    }
+  }
+}
