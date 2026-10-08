@@ -33,17 +33,26 @@ class OutboxRepository:
 
     # ── despacho (job dispatch_outbox_events) ───────────────────────
 
-    def lock_pending(self, limit: int) -> List[OutboxEvent]:
-        """Os mais antigos PENDING, travados com SKIP LOCKED: dois despachantes
-        em paralelo nunca pegam o mesmo evento."""
+    def list_pending(self, limit: int) -> List[OutboxEvent]:
+        """Os PENDING mais antigos, SEM lock: a chamada à IF acontece fora da transação."""
         return (
             self.session.query(OutboxEvent)
             .join(OutboxEvent.status)
             .filter(OutboxEventStatus.enumerator == OutboxEventStatus.PENDING)
             .order_by(OutboxEvent.id)
             .limit(limit)
-            .with_for_update(skip_locked=True, of=OutboxEvent)
             .all()
+        )
+
+    def lock_pending(self, event_id: int):
+        """Trava o evento se ainda estiver PENDING; SKIP LOCKED: outro despachante já o tem."""
+        return (
+            self.session.query(OutboxEvent)
+            .join(OutboxEvent.status)
+            .filter(OutboxEvent.id == event_id, OutboxEventStatus.enumerator == OutboxEventStatus.PENDING)
+            .populate_existing()
+            .with_for_update(skip_locked=True, of=OutboxEvent)
+            .first()
         )
 
     def mark_sent(self, event: OutboxEvent) -> None:

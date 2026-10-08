@@ -1,7 +1,7 @@
 from os import environ
 from pathlib import Path
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
 
@@ -52,6 +52,22 @@ class DbUtils:
     @staticmethod
     def database_url() -> str:
         return environ.get("DATABASE_URL", DEFAULT_DATABASE_URL)
+
+    @staticmethod
+    def execute(sql: str, params: dict = None):
+        """Roda um SQL avulso (com commit) e devolve as linhas, quando houver.
+
+        Para o teste preparar um cenário que a API não deixa montar pela
+        porta da frente — vencer uma parcela, passar o fechamento de uma
+        fatura —, sem esperar o calendário andar.
+        """
+        engine = create_engine(DbUtils.database_url())
+        try:
+            with engine.begin() as connection:
+                result = connection.execute(text(sql), params or {})
+                return result.all() if result.returns_rows else None
+        finally:
+            engine.dispose()
 
     @staticmethod
     def rollback() -> None:

@@ -1,0 +1,17 @@
+{
+  "title": "PostLoanPayment",
+  "description": "Pagamento avulso ou antecipado. REDUCE_TERM antecipa as últimas parcelas; REDUCE_INSTALLMENT reduz todas as futuras na mesma proporção.",
+  "type": "object",
+  "properties": {
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "mode": {
+      "enum": ["REDUCE_TERM", "REDUCE_INSTALLMENT"]
+    }
+  },
+  "required": ["amount", "mode"],
+  "additionalProperties": false
+}

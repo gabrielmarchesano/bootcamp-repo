@@ -5,8 +5,8 @@ class PixDTO:
     @staticmethod
     def key_to_dict(pix_key: PixKey) -> dict:
         return {
-            "pix_key_id": str(pix_key.id),
-            "account_id": str(pix_key.account_id),
+            "pix_key_id": str(pix_key.key),
+            "account_id": str(pix_key.account.key),
             "key_type": pix_key.key_type,
             "key_value": pix_key.key_value,
             "status": pix_key.status.enumerator,

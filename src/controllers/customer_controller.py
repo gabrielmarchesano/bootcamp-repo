@@ -61,7 +61,7 @@ class CustomerController(BaseController):
 
         self._validate_document(person_type, document)
 
-        self._validate_ei_owner(customer_data)
+        owner = self._validate_ei_owner(customer_data)
 
         if self.customer_repository.get_by_document(document) is not None:
             raise CustomerAlreadyExists("document", document)
@@ -78,7 +78,7 @@ class CustomerController(BaseController):
 
         account_status, status_reason = self._initial_account_status(kyc_status, age, is_pep)
 
-        customer = self.customer_repository.create(customer_data, birth_date, kyc_status)
+        customer = self.customer_repository.create(customer_data, birth_date, kyc_status, owner)
         account = self.account_repository.create_for_customer(customer, account_status, status_reason)
 
         try:
@@ -99,8 +99,8 @@ class CustomerController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.ACCOUNT_OPENED,
             "account",
-            account.id,
-            {"customer_id": str(customer.id), "status": account_status, "reason": status_reason},
+            account,
+            {"customer_id": str(customer.key), "status": account_status, "reason": status_reason},
         )
 
         self.session.commit()
@@ -147,8 +147,8 @@ class CustomerController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.ACCOUNT_OPENED,
             "account",
-            account.id,
-            {"customer_id": str(customer.id), "status": AccountStatus.ACTIVE, "reason": None},
+            account,
+            {"customer_id": str(customer.key), "status": AccountStatus.ACTIVE, "reason": None},
         )
 
         self.session.commit()
@@ -191,7 +191,7 @@ class CustomerController(BaseController):
         self.session.refresh(relationship)
         self.session.commit()
 
-        return CustomerDTO.relationship_to_dict(relationship)
+        return CustomerDTO.relationship_to_dict(relationship, legal, natural)
 
     # ── validações ───────────────────────────────────────────────────
 
@@ -210,8 +210,8 @@ class CustomerController(BaseController):
         if owner_customer_id is None:
             return None
 
-        owner_id = parse_uuid(owner_customer_id)
-        owner = self.customer_repository.get_by_id(owner_id) if owner_id is not None else None
+        owner_key = parse_uuid(owner_customer_id)
+        owner = self.customer_repository.get_by_key(owner_key) if owner_key is not None else None
 
         if owner is None or owner.person_type != Customer.NATURAL:
             raise InvalidEiOwner(owner_customer_id)
@@ -219,11 +219,11 @@ class CustomerController(BaseController):
         return owner
 
     def _get_customer_or_raise(self, raw_customer_id: str) -> Customer:
-        customer_id = parse_uuid(raw_customer_id)
+        customer_key = parse_uuid(raw_customer_id)
         customer = None
 
-        if customer_id is not None:
-            customer = self.customer_repository.get_by_id(customer_id)
+        if customer_key is not None:
+            customer = self.customer_repository.get_by_key(customer_key)
 
         if customer is None:
             raise CustomerNotFound(raw_customer_id)

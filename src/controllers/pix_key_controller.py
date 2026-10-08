@@ -46,14 +46,14 @@ class PixKeyController(BaseController):
         que mantém o teto de chaves honesto. A unicidade da chave entre
         contas é do banco (índice parcial ux_pix_key_active).
         """
-        account_id = parse_uuid(raw_account_id)
-        locked = self.account_repository.lock_customer_accounts([account_id]) if account_id is not None else {}
-        account = locked.get(account_id)
+        account_key = parse_uuid(raw_account_id)
+        locked = self.account_repository.lock_customer_accounts_by_key([account_key])
+        account = locked.get(account_key)
         if account is None:
             raise AccountNotFound(raw_account_id)
 
         if account.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(account.id, account.status.enumerator)
+            raise AccountNotActive(account.key, account.status.enumerator)
 
         key_type = payload["key_type"]
         key_value = self._key_value(account, key_type, payload.get("key_value"))
@@ -72,7 +72,7 @@ class PixKeyController(BaseController):
             raise PixKeyAlreadyRegistered(key_value)
 
         self.outbox_repository.add(
-            OutboxEvent.PIX_KEY_STATUS_CHANGED, "pix_key", pix_key.id, {"key_type": key_type, "status": PixKeyStatus.ACTIVE}
+            OutboxEvent.PIX_KEY_STATUS_CHANGED, "pix_key", pix_key, {"key_type": key_type, "status": PixKeyStatus.ACTIVE}
         )
         self.session.commit()
 
@@ -86,15 +86,15 @@ class PixKeyController(BaseController):
     @retry_on_deadlock()
     def delete(self, raw_account_id: str, raw_pix_key_id: str) -> dict:
         account = self._get_account(raw_account_id)
-        pix_key_id = parse_uuid(raw_pix_key_id)
-        pix_key = self.pix_key_repository.get_by_id(pix_key_id) if pix_key_id is not None else None
+        pix_key_key = parse_uuid(raw_pix_key_id)
+        pix_key = self.pix_key_repository.get_by_key(pix_key_key) if pix_key_key is not None else None
 
         if pix_key is None or pix_key.account_id != account.id or pix_key.status.enumerator != PixKeyStatus.ACTIVE:
             raise PixKeyNotFound(raw_pix_key_id)
 
         self.pix_key_repository.delete(pix_key, "customer request")
         self.outbox_repository.add(
-            OutboxEvent.PIX_KEY_STATUS_CHANGED, "pix_key", pix_key.id, {"key_type": pix_key.key_type, "status": PixKeyStatus.DELETED}
+            OutboxEvent.PIX_KEY_STATUS_CHANGED, "pix_key", pix_key, {"key_type": pix_key.key_type, "status": PixKeyStatus.DELETED}
         )
         self.session.commit()
 
@@ -178,8 +178,8 @@ class PixKeyController(BaseController):
         return key_value
 
     def _get_account(self, raw_account_id: str):
-        account_id = parse_uuid(raw_account_id)
-        account = self.account_repository.get_customer_account(account_id) if account_id is not None else None
+        account_key = parse_uuid(raw_account_id)
+        account = self.account_repository.get_customer_account(account_key) if account_key is not None else None
         if account is None:
             raise AccountNotFound(raw_account_id)
         return account

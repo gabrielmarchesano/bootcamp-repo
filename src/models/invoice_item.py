@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
+from sqlalchemy import CHAR, BigInteger, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -23,6 +23,8 @@ class InvoiceItem(Base):
     installment_number = Column(SmallInteger, nullable=False)
     installment_total = Column(SmallInteger, nullable=False)
     description = Column(String)
+    idempotency_key = Column(String, unique=True)  # só encargo (REVOLVING_CHARGE)
+    request_hash = Column(CHAR(64))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     invoice = relationship("Invoice", back_populates="items")

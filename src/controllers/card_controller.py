@@ -55,14 +55,14 @@ class CardController(BaseController):
         plástico. Como não há gráfica, ele sai na resposta FORA de
         produção — o mesmo atalho do sandbox da QI. O banco guarda só o hash.
         """
-        account_id = parse_uuid(raw_account_id)
-        locked = self.account_repository.lock_customer_accounts([account_id]) if account_id is not None else {}
-        account = locked.get(account_id)
+        account_key = parse_uuid(raw_account_id)
+        locked = self.account_repository.lock_customer_accounts_by_key([account_key])
+        account = locked.get(account_key)
         if account is None:
             raise AccountNotFound(raw_account_id)
 
         if account.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(account.id, account.status.enumerator)
+            raise AccountNotActive(account.key, account.status.enumerator)
 
         functions = payload["functions"]
         wallet_id = None
@@ -107,8 +107,8 @@ class CardController(BaseController):
         return CardDTO.card_to_dict(self._get_or_raise(raw_card_id))
 
     def list_by_account(self, raw_account_id: str) -> dict:
-        account_id = parse_uuid(raw_account_id)
-        account = self.account_repository.get_customer_account(account_id) if account_id is not None else None
+        account_key = parse_uuid(raw_account_id)
+        account = self.account_repository.get_customer_account(account_key) if account_key is not None else None
         if account is None:
             raise AccountNotFound(raw_account_id)
         return {"items": [CardDTO.card_to_dict(card) for card in self.card_repository.list_by_account(account.id)]}
@@ -149,8 +149,8 @@ class CardController(BaseController):
         return CardDTO.card_to_dict(card)
 
     def _get_or_raise(self, raw_card_id: str) -> Card:
-        card_id = parse_uuid(raw_card_id)
-        card = self.card_repository.get_by_id(card_id) if card_id is not None else None
+        card_key = parse_uuid(raw_card_id)
+        card = self.card_repository.get_by_key(card_key) if card_key is not None else None
         if card is None:
             raise CardNotFound(raw_card_id)
         return card
@@ -166,6 +166,6 @@ class CardController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.CARD_STATUS_CHANGED,
             "card",
-            card.id,
+            card,
             {"type": card.type, "status": card.status.enumerator, "old_status": old_status},
         )

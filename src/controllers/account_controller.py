@@ -49,12 +49,10 @@ class AccountController(BaseController):
         Transição recusada não grava evento: o histórico conta o que
         aconteceu, não o que foi tentado.
         """
-        account_id = parse_uuid(raw_account_id)
-        locked = {}
-        if account_id is not None:
-            locked = self.account_repository.lock_customer_accounts([account_id])
+        account_key = parse_uuid(raw_account_id)
+        locked = self.account_repository.lock_customer_accounts_by_key([account_key])
 
-        account = locked.get(account_id)
+        account = locked.get(account_key)
         if account is None:
             raise AccountNotFound(raw_account_id)
 
@@ -69,7 +67,7 @@ class AccountController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.ACCOUNT_STATUS_CHANGED,
             "account",
-            account.id,
+            account,
             {"from": old_status, "to": new_status, "reason": reason},
         )
 
@@ -96,11 +94,11 @@ class AccountController(BaseController):
             next_cursor = encode_cursor(last.created_at, last.id)
 
         return {
-            "account_id": str(account.id),
+            "account_id": str(account.key),
             "balance": account.balance,
             "held_balance": account.held_balance,
             "available_balance": account.available_balance,
-            "items": AccountDTO.statement_items(entries),
+            "items": AccountDTO.statement_items(entries, self.ledger_repository.reference_keys(entries)),
             "next_cursor": next_cursor,
         }
 
@@ -115,11 +113,11 @@ class AccountController(BaseController):
             raise AccountCannotBeClosed("there is an active loan")
 
     def _get_account_or_raise(self, raw_account_id: str) -> Account:
-        account_id = parse_uuid(raw_account_id)
+        account_key = parse_uuid(raw_account_id)
         account = None
 
-        if account_id is not None:
-            account = self.account_repository.get_customer_account(account_id)
+        if account_key is not None:
+            account = self.account_repository.get_customer_account(account_key)
 
         if account is None:
             raise AccountNotFound(raw_account_id)

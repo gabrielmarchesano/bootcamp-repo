@@ -102,8 +102,8 @@ class CardAuthorizationController(BaseController):
         if existing is not None:
             return existing.response_payload
 
-        card_id = parse_uuid(payload["card_id"])
-        card = self.card_repository.get_by_id(card_id) if card_id is not None else None
+        card_key = parse_uuid(payload["card_id"])
+        card = self.card_repository.get_by_key(card_key) if card_key is not None else None
         if card is None:
             # Cartão que não existe não vira linha (a FK não deixaria):
             # a resposta é determinística, então a repetição dá o mesmo.
@@ -323,6 +323,33 @@ class CardAuthorizationController(BaseController):
 
         return CardDTO.authorization_to_dict(authorization)
 
+    @retry_on_deadlock()
+    def expire(self, authorization_id: str) -> bool:
+        """APPROVED → EXPIRED (job expire_authorizations): solta o HOLD ou a reserva.
+
+        Mesma ordem de lock da captura. Se a autorização foi capturada ou
+        desfeita enquanto o job rodava, o status já não é APPROVED e nada
+        acontece. Devolve True se expirou agora.
+        """
+        authorization, account, wallet = self._lock_existing(authorization_id)
+
+        if not self._is_approved(authorization) or authorization.expires_at is None:
+            self.session.rollback()
+            return False
+
+        if authorization.expires_at > datetime.now(timezone.utc):
+            self.session.rollback()
+            return False
+
+        amount = authorization.authorized_amount
+        self._release(account, wallet, authorization.function, amount)
+        self.authorization_repository.update_status(authorization, CardAuthorizationStatus.EXPIRED, "expires_at")
+        if amount > 0:
+            self.authorization_repository.add_event(authorization, CardAuthorizationEvent.EXPIRATION, amount, None)
+        self._outbox(authorization, CardAuthorizationEvent.EXPIRATION, amount)
+        self.session.commit()
+        return True
+
     def get_by_authorization_id(self, authorization_id: str) -> dict:
         authorization = self.authorization_repository.get_by_authorization_id(authorization_id)
         if authorization is None:
@@ -415,7 +442,7 @@ class CardAuthorizationController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.CARD_AUTHORIZATION,
             "card_authorization",
-            authorization.id,
+            authorization,
             {
                 "authorization_id": authorization.authorization_id,
                 "status": authorization.status.enumerator,

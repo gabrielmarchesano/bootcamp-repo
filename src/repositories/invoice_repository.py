@@ -143,6 +143,9 @@ class InvoiceRepository:
         self.session.flush()
         return invoice
 
+    def get_charge_by_idempotency_key(self, idempotency_key: str) -> Optional[InvoiceItem]:
+        return self.session.query(InvoiceItem).filter(InvoiceItem.idempotency_key == idempotency_key).first()
+
     def add_item(
         self,
         invoice: Invoice,
@@ -152,8 +155,12 @@ class InvoiceRepository:
         installment_number: int,
         installment_total: int,
         description: Optional[str],
+        idempotency_key: Optional[str] = None,
+        request_hash: Optional[str] = None,
     ) -> InvoiceItem:
         item = InvoiceItem()
+        item.idempotency_key = idempotency_key
+        item.request_hash = request_hash
         item.invoice_id = invoice.id
         item.card_authorization_id = authorization_id
         item.type = item_type

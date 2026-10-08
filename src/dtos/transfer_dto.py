@@ -7,6 +7,10 @@ def _iso(value):
     return value.isoformat() if value is not None else None
 
 
+def _key(entity):
+    return str(entity.key) if entity is not None else None
+
+
 class TransferDTO:
     @staticmethod
     def obj_to_dict(transfer: Transfer) -> dict:
@@ -14,9 +18,10 @@ class TransferDTO:
 
         `request_control_key` é o Idempotency-Key ecoado de volta, como a QI
         faz. O `request_hash` continua de fora: é detalhe da deduplicação.
+        Os *_id da resposta são as keys públicas, nunca o id interno.
         """
         if transfer.on_us and transfer.destination_account_id is not None:
-            destination = {"account_id": str(transfer.destination_account_id)}
+            destination = {"account_id": _key(transfer.destination_account)}
         elif transfer.destination_ispb is not None:
             destination = {
                 "ispb": transfer.destination_ispb,
@@ -31,13 +36,13 @@ class TransferDTO:
             destination = None
 
         body = {
-            "transfer_id": str(transfer.id),
+            "transfer_id": str(transfer.key),
             "request_control_key": transfer.idempotency_key,
             "method": transfer.method,
             "status": transfer.status.enumerator,
             "amount": transfer.amount,
             "fee": transfer.fee,
-            "source_account_id": str(transfer.source_account_id),
+            "source_account_id": _key(transfer.source_account),
             "on_us": transfer.on_us,
             "destination": destination,
             "created_at": transfer.created_at.isoformat(),
@@ -50,7 +55,7 @@ class TransferDTO:
                 "pix_key": transfer.pix_key,
                 "end_to_end_id": transfer.end_to_end_id,
                 "pix_message": transfer.pix_message,
-                "original_incoming_transfer_id": _iso_id(transfer.original_incoming_transfer_id),
+                "original_incoming_transfer_id": _key(transfer.original_incoming_transfer),
                 "reversal_reason": transfer.reversal_reason,
             }
 
@@ -67,23 +72,16 @@ class TransferDTO:
 
     @staticmethod
     def list_obj_to_list_dict(transfers: List[Transfer]) -> List[dict]:
-        items = []
-        for transfer in transfers:
-            items.append(TransferDTO.obj_to_dict(transfer))
-        return items
+        return [TransferDTO.obj_to_dict(transfer) for transfer in transfers]
 
     @staticmethod
     def incoming_to_dict(incoming: IncomingTransfer) -> dict:
         return {
-            "incoming_transfer_id": str(incoming.id),
+            "incoming_transfer_id": str(incoming.key),
             "rail": incoming.rail,
             "pix_transfer_type": incoming.pix_transfer_type,
             "external_id": incoming.external_id,
             "status": incoming.status.enumerator,
             "amount": incoming.amount,
-            "original_transfer_id": _iso_id(incoming.original_transfer_id),
+            "original_transfer_id": _key(incoming.original_transfer),
         }
-
-
-def _iso_id(value):
-    return str(value) if value is not None else None

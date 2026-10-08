@@ -867,8 +867,15 @@ CREATE TABLE invoice_item (
     installment_number     SMALLINT NOT NULL DEFAULT 1,
     installment_total      SMALLINT NOT NULL DEFAULT 1,
     description            TEXT,
+    -- Encargo lançado pela IF (POST /invoice/{key}/charge): move dinheiro,
+    -- então tem Idempotency-Key. Compra e estorno vêm da rede, sem chave.
+    idempotency_key        TEXT UNIQUE,
+    request_hash           CHAR(64),
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT ck_installment_range CHECK (installment_number BETWEEN 1 AND installment_total)
+    CONSTRAINT ck_installment_range CHECK (installment_number BETWEEN 1 AND installment_total),
+    CONSTRAINT ck_charge_idempotency CHECK (
+        (type = 'REVOLVING_CHARGE'::enum_invoice_item_type) = (idempotency_key IS NOT NULL)
+        AND (idempotency_key IS NULL) = (request_hash IS NULL))
 );
 CREATE INDEX ix_invoice_item ON invoice_item (invoice_id);
  

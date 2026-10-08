@@ -170,14 +170,14 @@ class WebhookController(BaseController):
         self.outbox_repository.add(
             event_type,
             "incoming_transfer",
-            incoming.id,
+            incoming,
             {
                 "rail": rail,
                 "external_id": external_id,
                 "amount": payload["amount"],
                 "status": status,
                 "pix_transfer_type": pix_transfer_type,
-                "original_transfer_id": str(original.id) if original is not None else None,
+                "original_transfer_id": str(original.key) if original is not None else None,
             },
         )
 
@@ -297,7 +297,7 @@ class WebhookController(BaseController):
         self.outbox_repository.add(
             event_type,
             "transfer",
-            transfer.id,
+            transfer,
             {
                 "request_control_key": transfer.idempotency_key,
                 "status": transfer.status.enumerator,

@@ -28,16 +28,15 @@ class TransferResource:
 
         return JSONResponse(content=jsonable_encoder(transfer), status_code=status_code)
 
-    def on_get_by_id(self, transfer_id: str) -> JSONResponse:
+    def on_get_by_id(self, transfer_key: str) -> JSONResponse:
         controller = TransferController()
-        transfer = controller.get_by_id(transfer_id)
+        transfer = controller.get_by_id(transfer_key)
 
         return JSONResponse(content=jsonable_encoder(transfer), status_code=http_status.HTTP_200_OK)
 
-    def on_patch_cancel(self, transfer_id: str) -> JSONResponse:
+    def on_patch_cancel(self, transfer_key: str) -> JSONResponse:
         """SCHEDULED → CANCELED. Qualquer outro status: 409."""
         controller = TransferController()
-        transfer = controller.cancel(transfer_id)
- 
+        transfer = controller.cancel(transfer_key)
+
         return JSONResponse(content=jsonable_encoder(transfer), status_code=http_status.HTTP_200_OK)
- 
