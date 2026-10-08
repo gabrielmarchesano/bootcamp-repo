@@ -1,7 +1,14 @@
 from models import Account, Customer, CustomerRelationship
 
 
+def _key(entity):
+    """A key pública da entidade, como texto (ou None)."""
+    return str(entity.key) if entity is not None else None
+
+
 class CustomerDTO:
+    """Toda resposta expõe a `key` (UUID) nos campos *_id; o id BIGINT nunca sai do banco."""
+
     @staticmethod
     def _primary_account(customer: Customer):
         """A conta "principal" do titular: a mais antiga por created_at.
@@ -19,19 +26,19 @@ class CustomerDTO:
         account = CustomerDTO._primary_account(customer)
 
         return {
-            "customer_id": str(customer.id),
+            "customer_id": str(customer.key),
             "person_type": customer.person_type,
             "document": customer.document,
             "name": customer.name,
             "birth_date": customer.birth_date.isoformat() if customer.birth_date is not None else None,
             "legal_nature": customer.legal_nature,
-            "owner_customer_id": str(customer.owner_customer_id) if customer.owner_customer_id is not None else None,
+            "owner_customer_id": _key(customer.owner) if customer.owner_customer_id is not None else None,
             "annual_revenue": customer.annual_revenue,
             "revenue_reference_date": customer.revenue_reference_date.isoformat(),
             "microcredit_eligible": customer.microcredit_eligible,
             "kyc_status": customer.kyc_status.enumerator,
             "is_pep": customer.is_pep,
-            "account_id": str(account.id) if account is not None else None,
+            "account_id": _key(account),
             "created_at": customer.created_at.isoformat(),
         }
 
@@ -44,8 +51,8 @@ class CustomerDTO:
         A conta da criação é a recém-aberta (não dependemos da ordenação).
         """
         return {
-            "customer_id": str(customer.id),
-            "account_id": str(account.id),
+            "customer_id": str(customer.key),
+            "account_id": str(account.key),
             "branch": account.branch,
             "account_number": account.number,
             "status": account.status.enumerator,
@@ -56,8 +63,8 @@ class CustomerDTO:
     @staticmethod
     def account_to_dict(account: Account) -> dict:
         return {
-            "account_id": str(account.id),
-            "customer_id": str(account.customer_id),
+            "account_id": str(account.key),
+            "customer_id": _key(account.customer),
             "branch": account.branch,
             "account_number": account.number,
             "status": account.status.enumerator,
@@ -70,10 +77,10 @@ class CustomerDTO:
         return {"items": [CustomerDTO.account_to_dict(account) for account in accounts]}
 
     @staticmethod
-    def relationship_to_dict(relationship: CustomerRelationship) -> dict:
+    def relationship_to_dict(relationship: CustomerRelationship, legal: Customer, natural: Customer) -> dict:
         return {
-            "legal_customer_id": str(relationship.legal_customer_id),
-            "natural_customer_id": str(relationship.natural_customer_id),
+            "legal_customer_id": str(legal.key),
+            "natural_customer_id": str(natural.key),
             "role": relationship.role,
             "created_at": relationship.created_at.isoformat(),
         }

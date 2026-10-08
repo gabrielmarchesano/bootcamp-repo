@@ -1,4 +1,6 @@
-from sqlalchemy import CHAR, BigInteger, Column, DateTime, ForeignKey, SmallInteger, String, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, CHAR, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
@@ -26,10 +28,11 @@ class CardAuthorization(Base):
     WALLET_NOT_ACTIVE = "WALLET_NOT_ACTIVE"
     FUNCTION_NOT_SUPPORTED = "FUNCTION_NOT_SUPPORTED"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
     authorization_id = Column(String, nullable=False, unique=True)
-    card_id = Column(UUID(as_uuid=True), ForeignKey("card.id"), nullable=False)
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
+    card_id = Column(BigInteger, ForeignKey("card.id"), nullable=False)
+    account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     function = Column(String, nullable=False)
     amount = Column(BigInteger, nullable=False)
     authorized_amount = Column(BigInteger, nullable=False)

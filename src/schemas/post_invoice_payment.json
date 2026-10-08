@@ -1,0 +1,14 @@
+{
+  "title": "PostInvoicePayment",
+  "description": "Pagamento de fatura, total ou parcial.",
+  "type": "object",
+  "properties": {
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    }
+  },
+  "required": ["amount"],
+  "additionalProperties": false
+}

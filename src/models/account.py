@@ -1,4 +1,6 @@
-from sqlalchemy import CHAR, BigInteger, Column, DateTime, ForeignKey, SmallInteger, String, func
+from uuid import uuid4
+
+from sqlalchemy import CHAR, BigInteger, Column, DateTime, ForeignKey, Identity, SmallInteger, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -26,9 +28,10 @@ class Account(Base):
  
     DEFAULT_BRANCH = "0001"
  
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
     type = Column(String, nullable=False)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("customer.id"))
+    customer_id = Column(BigInteger, ForeignKey("customer.id"))
     internal_code = Column(String, unique=True)
     branch = Column(CHAR(4))
     number = Column(String, unique=True)

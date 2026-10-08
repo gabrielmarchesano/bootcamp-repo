@@ -1,4 +1,6 @@
-from sqlalchemy import CHAR, Boolean, Column, DateTime, ForeignKey, SmallInteger, String, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, Boolean, CHAR, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -21,9 +23,10 @@ class Card(Base):
     CREDIT = "CREDIT"
     MULTIPLE = "MULTIPLE"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
-    wallet_id = Column(UUID(as_uuid=True), ForeignKey("credit_wallet.id"))
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
+    account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
+    wallet_id = Column(BigInteger, ForeignKey("credit_wallet.id"))
     type = Column(String, nullable=False)
     pan_token = Column(String, nullable=False, unique=True)
     last4 = Column(CHAR(4), nullable=False)
@@ -39,6 +42,7 @@ class Card(Base):
 
     status = relationship("CardStatus", foreign_keys=[status_id], lazy="selectin")
     wallet = relationship("CreditWallet", lazy="selectin")
+    account = relationship("Account", foreign_keys=[account_id], lazy="select")
     status_events = relationship("CardStatusEvent", back_populates="card", order_by="CardStatusEvent.id", lazy="select")
 
     def supports(self, function: str) -> bool:

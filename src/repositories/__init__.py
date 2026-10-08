@@ -11,3 +11,5 @@ from repositories.card_authorization_repository import CardAuthorizationReposito
 from repositories.credit_wallet_repository import CreditWalletRepository
 from repositories.invoice_repository import InvoiceRepository
 from repositories.calendar_repository import CalendarRepository
+from repositories.credit_line_repository import CreditLineRepository
+from repositories.loan_repository import LoanRepository

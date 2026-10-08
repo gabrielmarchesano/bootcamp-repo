@@ -18,12 +18,18 @@ def _status_events(entity) -> List[dict]:
     return events
 
 
+def _key(entity):
+    return str(entity.key) if entity is not None else None
+
+
 class CardDTO:
+    """Os *_id da resposta são as keys públicas (UUID); o id BIGINT não sai do banco."""
+
     @staticmethod
     def wallet_to_dict(wallet: CreditWallet) -> dict:
         return {
-            "wallet_id": str(wallet.id),
-            "account_id": str(wallet.account_id),
+            "wallet_id": str(wallet.key),
+            "account_id": _key(wallet.account),
             "status": wallet.status.enumerator,
             "status_events": _status_events(wallet),
             "total_limit": wallet.total_limit,
@@ -40,9 +46,9 @@ class CardDTO:
     @staticmethod
     def card_to_dict(card: Card) -> dict:
         return {
-            "card_id": str(card.id),
-            "account_id": str(card.account_id),
-            "wallet_id": str(card.wallet_id) if card.wallet_id is not None else None,
+            "card_id": str(card.key),
+            "account_id": _key(card.account),
+            "wallet_id": _key(card.wallet) if card.wallet_id is not None else None,
             "type": card.type,
             "functions": card.functions,
             "brand": card.brand,
@@ -59,7 +65,7 @@ class CardDTO:
     def authorization_to_dict(authorization: CardAuthorization) -> dict:
         return {
             "authorization_id": authorization.authorization_id,
-            "card_id": str(authorization.card_id),
+            "card_id": _key(authorization.card),
             "function": authorization.function,
             "status": authorization.status.enumerator,
             "response_code": authorization.response_code,
@@ -79,19 +85,21 @@ class CardDTO:
     @staticmethod
     def invoice_to_dict(invoice: Invoice, with_items: bool = False) -> dict:
         body = {
-            "invoice_id": str(invoice.id),
-            "wallet_id": str(invoice.wallet_id),
+            "invoice_id": str(invoice.key),
+            "wallet_id": _key(invoice.wallet),
             "reference_month": invoice.reference_month.isoformat(),
             "status": invoice.status.enumerator,
             "closing_date": invoice.closing_date.isoformat(),
             "due_date": invoice.due_date.isoformat(),
             "total_amount": invoice.total_amount,
             "paid_amount": invoice.paid_amount,
+            "remaining_amount": max(invoice.total_amount - invoice.paid_amount, 0),
+            "original_debt_amount": invoice.original_debt_amount,
         }
         if with_items:
             body["items"] = [
                 {
-                    "invoice_item_id": str(item.id),
+                    "invoice_item_id": str(item.key),
                     "type": item.type,
                     "amount": item.amount,
                     "installment_number": item.installment_number,

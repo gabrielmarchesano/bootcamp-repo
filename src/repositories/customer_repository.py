@@ -13,7 +13,7 @@ class CustomerRepository:
         self.session = context.db_session
         self.enumerators = EnumeratorRepository(context)
 
-    def create(self, customer_data: dict, birth_date, kyc_status: str) -> Customer:
+    def create(self, customer_data: dict, birth_date, kyc_status: str, owner: Customer = None) -> Customer:
         """Grava as colunas que o cliente informa. As colunas GERADAS
         (exposure_customer_id, fee_segment, microcredit_eligible) NÃO são
         tocadas — o banco as calcula, e o controller faz refresh para lê-las.
@@ -25,9 +25,9 @@ class CustomerRepository:
         customer.birth_date = birth_date
         customer.legal_nature = customer_data.get("legal_nature")
 
-        owner_customer_id = customer_data.get("owner_customer_id")
-        if owner_customer_id is not None:
-            customer.owner_customer_id = owner_customer_id
+        # O payload traz a key do dono; o controller já a resolveu para o titular.
+        if owner is not None:
+            customer.owner_customer_id = owner.id
             customer.owner_person_type = Customer.NATURAL
 
         customer.annual_revenue = customer_data["annual_revenue"]
@@ -37,7 +37,10 @@ class CustomerRepository:
         self.session.add(customer)
         return customer
 
-    def get_by_id(self, customer_id: UUID) -> Customer:
+    def get_by_key(self, customer_key: UUID) -> Customer:
+        return self.session.query(Customer).filter(Customer.key == customer_key).first()
+
+    def get_by_id(self, customer_id: int) -> Customer:
         return self.session.query(Customer).filter(Customer.id == customer_id).first()
 
     def get_by_document(self, document: str) -> Customer:
@@ -51,7 +54,7 @@ class CustomerRepository:
         customer.updated_at = func.now()
 
     def add_relationship(
-        self, legal_customer_id: UUID, natural_customer_id: UUID, role: str
+        self, legal_customer_id: int, natural_customer_id: int, role: str
     ) -> CustomerRelationship:
         relationship = CustomerRelationship()
         relationship.legal_customer_id = legal_customer_id

@@ -1,4 +1,6 @@
-from sqlalchemy import Column, DateTime, ForeignKey, SmallInteger, String, func
+from uuid import uuid4
+
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity, SmallInteger, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
@@ -19,8 +21,9 @@ class PixKey(Base):
     PHONE = "PHONE"
     EVP = "EVP"  # chave aleatória
 
-    id = Column(UUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
+    id = Column(BigInteger, Identity(always=True), primary_key=True)
+    key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
+    account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     key_type = Column(String, nullable=False)
     key_value = Column(String(77), nullable=False)
     status_id = Column(SmallInteger, ForeignKey(PixKeyStatus.id), nullable=False)

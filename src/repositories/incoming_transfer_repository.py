@@ -12,8 +12,8 @@ class IncomingTransferRepository:
         self.enumerators = EnumeratorRepository(context)
 
     
-    def get_by_id(self, incoming_transfer_id: UUID) -> Optional[IncomingTransfer]:
-        return self.session.query(IncomingTransfer).filter(IncomingTransfer.id == incoming_transfer_id).first()    
+    def get_by_key(self, incoming_transfer_key: UUID) -> Optional[IncomingTransfer]:
+        return self.session.query(IncomingTransfer).filter(IncomingTransfer.key == incoming_transfer_key).first()
 
     def get_by_external_id(self, rail: str, external_id: str) -> IncomingTransfer:
         return (

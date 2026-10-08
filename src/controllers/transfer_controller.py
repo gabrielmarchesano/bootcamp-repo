@@ -122,38 +122,38 @@ class TransferController(BaseController):
         if replay is not None:
             return replay, False
 
-        source_id = parse_uuid(payload["source_account_id"])
-        destination_id = parse_uuid(payload["destination"]["account_id"])
+        source_key = parse_uuid(payload["source_account_id"])
+        destination_key = parse_uuid(payload["destination"]["account_id"])
 
-        if source_id is None:
+        if source_key is None:
             raise AccountNotFound(payload["source_account_id"])
 
-        if destination_id is None:
+        if destination_key is None:
             raise AccountNotFound(payload["destination"]["account_id"])
 
-        if source_id == destination_id:
+        if source_key == destination_key:
             raise SameAccountTransfer()
 
-        locked = self.account_repository.lock_customer_accounts([source_id, destination_id])
+        locked = self.account_repository.lock_customer_accounts_by_key([source_key, destination_key])
 
         replay = self._find_replay(idempotency_key, payload_hash)
         if replay is not None:
             return replay, False
 
-        source = locked.get(source_id)
-        destination = locked.get(destination_id)
+        source = locked.get(source_key)
+        destination = locked.get(destination_key)
 
         if source is None:
-            raise AccountNotFound(source_id)
+            raise AccountNotFound(source_key)
 
         if destination is None:
-            raise AccountNotFound(destination_id)
+            raise AccountNotFound(destination_key)
 
         if source.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(source.id, source.status.enumerator)
+            raise AccountNotActive(source.key, source.status.enumerator)
 
         if destination.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(destination.id, destination.status.enumerator)
+            raise AccountNotActive(destination.key, destination.status.enumerator)
 
         amount = payload["amount"]
         fee = self.transfer_repository.current_fee(Transfer.TEF, source.customer.fee_segment)
@@ -191,7 +191,7 @@ class TransferController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.OUTGOING_TEF,
             "transfer",
-            transfer.id,
+            transfer,
             {"method": Transfer.TEF, "amount": amount, "fee": fee},
         )
 
@@ -200,11 +200,11 @@ class TransferController(BaseController):
         return TransferDTO.obj_to_dict(transfer), True
 
     def get_by_id(self, raw_transfer_id: str) -> dict:
-        transfer_id = parse_uuid(raw_transfer_id)
+        transfer_key = parse_uuid(raw_transfer_id)
         transfer = None
 
-        if transfer_id is not None:
-            transfer = self.transfer_repository.get_by_id(transfer_id)
+        if transfer_key is not None:
+            transfer = self.transfer_repository.get_by_key(transfer_key)
 
         if transfer is None:
             raise TransferNotFound(raw_transfer_id)
@@ -212,18 +212,18 @@ class TransferController(BaseController):
         return TransferDTO.obj_to_dict(transfer)
 
     def list_by_account(self, raw_account_id: str, statuses: list, limit: int, cursor: str) -> dict:
-        account_id = parse_uuid(raw_account_id)
+        account_key = parse_uuid(raw_account_id)
         account = None
-        if account_id is not None:
-            account = self.account_repository.get_customer_account(account_id)
+        if account_key is not None:
+            account = self.account_repository.get_customer_account(account_key)
 
         if account is None:
             raise AccountNotFound(raw_account_id)
 
         try:
             after = decode_cursor(cursor)
-            if after is not None and parse_uuid(after[1]) is None:
-                raise ValueError("cursor id is not a uuid")
+            if after is not None:
+                int(after[1])
         except (ValueError, TypeError, UnicodeDecodeError):
             raise InvalidParameter("cursor is not valid")
 
@@ -286,9 +286,11 @@ class TransferController(BaseController):
         # Resolve origem e destino SEM lock para descobrir se é on-us; só então
         # trava as duas contas de uma vez, em ordem de id (igual à TEF), para
         # que dois Pix cruzados (A→B e B→A) não travem em sentidos opostos.
-        source_id = parse_uuid(raw_account_id)
-        if source_id is None:
+        source_key = parse_uuid(raw_account_id)
+        unlocked_source = self.account_repository.get_customer_account(source_key) if source_key is not None else None
+        if unlocked_source is None:
             raise AccountNotFound(raw_account_id)
+        source_id = unlocked_source.id
 
         if payload["pix_transfer_type"] == Transfer.PIX_KEY:
             resolved = self._pix_key_fields(source_id, payload)
@@ -308,7 +310,7 @@ class TransferController(BaseController):
             raise AccountNotFound(raw_account_id)
 
         if source.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(source.id, source.status.enumerator)
+            raise AccountNotActive(source.key, source.status.enumerator)
 
         destination = locked.get(destination_id) if destination_id is not None else None
 
@@ -393,18 +395,35 @@ class TransferController(BaseController):
         if replay is not None:
             return replay, False
 
-        incoming_id = parse_uuid(raw_incoming_transfer_id)
-        incoming = self.incoming_repository.get_by_id(incoming_id) if incoming_id is not None else None
+        incoming_key = parse_uuid(raw_incoming_transfer_id)
+        incoming = self.incoming_repository.get_by_key(incoming_key) if incoming_key is not None else None
 
         if incoming is None or incoming.destination_account_id != source.id:
             raise IncomingTransferNotFound(raw_incoming_transfer_id)
 
+        # Só Pix se devolve (TED devolvida é outro fluxo), e devolução de
+        # devolução não existe.
+        if incoming.rail != IncomingTransfer.SPI:
+            raise IncomingTransferNotReversible("only Pix can be reversed")
+
+        if incoming.pix_transfer_type == IncomingTransfer.PIX_REVERSAL:
+            raise IncomingTransferNotReversible("it is already a reversal")
+
         if incoming.status.enumerator != IncomingTransferStatus.CREDITED:
             raise IncomingTransferNotReversible(incoming.status.enumerator)
 
+        if datetime.now(timezone.utc) - incoming.received_at > timedelta(days=REVERSAL_WINDOW_DAYS):
+            raise ReversalWindowExpired()
+
         amount = payload["amount"]
-        if self.transfer_repository.reversed_total(incoming.id) + amount > incoming.amount:
-            raise ReversalExceedsReceived(self.transfer_repository.reversed_total(incoming.id) + amount, incoming.amount)
+        reversed_total = self.transfer_repository.reversed_total(incoming.id)
+        if reversed_total + amount > incoming.amount:
+            raise ReversalExceedsReceived(reversed_total + amount, incoming.amount)
+
+        # A devolução tira dinheiro da conta como qualquer saída: saldo é lido
+        # depois do lock (o _lock_active_source já travou a conta).
+        if amount > source.available_balance:
+            raise InsufficientBalance(amount, source.available_balance)
 
         fields = {
             "pix_transfer_type": Transfer.PIX_REVERSAL,
@@ -532,8 +551,8 @@ class TransferController(BaseController):
     @retry_on_deadlock()
     def cancel(self, raw_transfer_id: str) -> dict:
         """SCHEDULED → CANCELED. Qualquer outro status: 409 (QIT001028)."""
-        transfer_id = parse_uuid(raw_transfer_id)
-        transfer = self.transfer_repository.get_by_id(transfer_id) if transfer_id is not None else None
+        transfer_key = parse_uuid(raw_transfer_id)
+        transfer = self.transfer_repository.get_by_key(transfer_key) if transfer_key is not None else None
 
         if transfer is None:
             raise TransferNotFound(raw_transfer_id)
@@ -550,21 +569,83 @@ class TransferController(BaseController):
 
         return TransferDTO.obj_to_dict(transfer)
 
+    # ── TED agendada (job run_scheduled_teds) ───────────────────────
+
+    @retry_on_deadlock()
+    def execute_scheduled_ted(self, transfer_id: int) -> str:
+        """Executa uma TED SCHEDULED: volta ao começo do fluxo da TED imediata.
+
+        Mesma ordem de lock (conta → transferência) e as mesmas regras de
+        status, tarifa e saldo. Sem saldo ou com a conta fora de ACTIVE, a
+        TED vira FAILED — o cliente agendou, mas o dinheiro não estava lá.
+        Idempotente: se já não está SCHEDULED, não faz nada.
+
+        Devolve o desfecho: SENT, FAILED ou SKIPPED.
+        """
+        transfer = self.session.get(Transfer, transfer_id)
+        if transfer is None:
+            return "SKIPPED"
+
+        locked = self.account_repository.lock_customer_accounts([transfer.source_account_id])
+        transfer = self.transfer_repository.lock(transfer)
+
+        if transfer.status.enumerator != TransferStatus.SCHEDULED:
+            self.session.rollback()
+            return "SKIPPED"
+
+        source = locked.get(transfer.source_account_id)
+        if source is None or source.status.enumerator != AccountStatus.ACTIVE:
+            transfer.failure_reason = "ACCOUNT_NOT_ACTIVE"
+            self.transfer_repository.update_status(transfer, TransferStatus.FAILED, "ACCOUNT_NOT_ACTIVE")
+            self._ted_outbox(transfer)
+            self.session.commit()
+            return TransferStatus.FAILED
+
+        fee = self.transfer_repository.current_fee(Transfer.TED, source.customer.fee_segment)
+        if transfer.amount + fee > source.available_balance:
+            transfer.failure_reason = "INSUFFICIENT_BALANCE"
+            self.transfer_repository.update_status(transfer, TransferStatus.FAILED, "INSUFFICIENT_BALANCE")
+            self._ted_outbox(transfer)
+            self.session.commit()
+            return TransferStatus.FAILED
+
+        transfer.fee = fee
+        transfer.str_control_number = self.transfer_repository.generate_str_control_number()
+        self.transfer_repository.update_status(transfer, TransferStatus.SENT, "scheduled TED executed")
+
+        settlement = self.account_repository.get_internal(Account.STR_SETTLEMENT)
+        legs = [
+            LedgerLeg(source, -transfer.amount, LedgerEntry.TED_SENT, Transfer.TED, transfer.str_control_number),
+            LedgerLeg(settlement, transfer.amount, LedgerEntry.TED_SENT, Transfer.TED, transfer.str_control_number),
+        ]
+        if fee > 0:
+            fee_revenue = self.account_repository.get_internal(Account.FEE_REVENUE)
+            legs.append(LedgerLeg(source, -fee, LedgerEntry.TRANSFER_FEE, Transfer.TED))
+            legs.append(LedgerLeg(fee_revenue, fee, LedgerEntry.TRANSFER_FEE, Transfer.TED))
+
+        self.ledger_repository.post(legs, LedgerEntry.REF_TRANSFER, transfer.id)
+        self._ted_outbox(transfer)
+        self.session.commit()
+        return TransferStatus.SENT
+
+    def ted_window_open(self) -> bool:
+        return self._ted_window_open()
+
     # ── auxiliares ───────────────────────────────────────────────────
 
     def _lock_active_source(self, raw_account_id: str) -> Account:
         """Resolve, trava e confere que a conta de origem está ativa."""
-        account_id = parse_uuid(raw_account_id)
-        if account_id is None:
+        account_key = parse_uuid(raw_account_id)
+        if account_key is None:
             raise AccountNotFound(raw_account_id)
 
-        locked = self.account_repository.lock_customer_accounts([account_id])
-        source = locked.get(account_id)
+        locked = self.account_repository.lock_customer_accounts_by_key([account_key])
+        source = locked.get(account_key)
         if source is None:
             raise AccountNotFound(raw_account_id)
 
         if source.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(source.id, source.status.enumerator)
+            raise AccountNotActive(source.key, source.status.enumerator)
 
         return source
 
@@ -668,7 +749,7 @@ class TransferController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.OUTGOING_PIX,
             "transfer",
-            transfer.id,
+            transfer,
             {
                 "request_control_key": transfer.idempotency_key,
                 "status": transfer.status.enumerator,
@@ -681,7 +762,7 @@ class TransferController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.OUTGOING_TED,
             "transfer",
-            transfer.id,
+            transfer,
             {
                 "request_control_key": transfer.idempotency_key,
                 "status": transfer.status.enumerator,

@@ -6,4 +6,7 @@ from controllers.pix_key_controller import PixKeyController
 from controllers.credit_wallet_controller import CreditWalletController
 from controllers.card_controller import CardController
 from controllers.card_authorization_controller import CardAuthorizationController
- 
+from controllers.credit_line_controller import CreditLineController
+from controllers.loan_controller import LoanController
+from controllers.invoice_controller import InvoiceController
+from controllers.job_controller import JobController

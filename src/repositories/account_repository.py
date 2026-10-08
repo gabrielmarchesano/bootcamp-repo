@@ -66,7 +66,15 @@ class AccountRepository:
 
         return account
 
-    def get_customer_account(self, account_id: UUID) -> Account:
+    def get_customer_account(self, account_key: UUID) -> Optional[Account]:
+        """Conta de cliente pela `key` pública (a que a API recebe)."""
+        return (
+            self.session.query(Account)
+            .filter(Account.key == account_key, Account.type == Account.CUSTOMER)
+            .first()
+        )
+
+    def get_customer_account_by_id(self, account_id: int) -> Optional[Account]:
         return (
             self.session.query(Account)
             .filter(Account.id == account_id, Account.type == Account.CUSTOMER)
@@ -87,7 +95,28 @@ class AccountRepository:
             .one()
         )
 
-    def lock_customer_accounts(self, account_ids: List[UUID]) -> Dict[UUID, Account]:
+    def lock_customer_accounts_by_key(self, account_keys: List[UUID]) -> Dict[UUID, Account]:
+        """Mesmo lock de `lock_customer_accounts`, para quem só tem a `key` pública.
+
+        Traduz key → id SEM lock e trava pelo id. A ordem de travamento é
+        sempre a do id interno — nunca a da key —, porque os outros caminhos
+        (webhook, jobs) travam por id; misturar duas ordens reabre o deadlock.
+        """
+        keys = [key for key in set(account_keys) if key is not None]
+        if not keys:
+            return {}
+
+        rows = (
+            self.session.query(Account.id, Account.key)
+            .filter(Account.key.in_(keys), Account.type == Account.CUSTOMER)
+            .all()
+        )
+        key_by_id = {row.id: row.key for row in rows}
+        locked = self.lock_customer_accounts(list(key_by_id))
+
+        return {key_by_id[account_id]: account for account_id, account in locked.items()}
+
+    def lock_customer_accounts(self, account_ids: List[int]) -> Dict[int, Account]:
         """Trava as contas de cliente pedidas, uma a uma, em ordem crescente de id.
 
         Uma consulta por conta (e não um IN com ORDER BY) para que a ordem
@@ -105,7 +134,7 @@ class AccountRepository:
         """
         locked = {}
 
-        for account_id in sorted(set(account_ids), key=str):
+        for account_id in sorted(set(account_ids)):
             account = (
                 self.session.query(Account)
                 .filter(Account.id == account_id, Account.type == Account.CUSTOMER)
@@ -132,8 +161,7 @@ class AccountRepository:
 
         self._record_status_event(account, old_status, account.status, reason)
 
-    def has_active_loan(self, account_id: UUID) -> bool:
-        # SQL direto: o model de Loan nasce no sprint de microcrédito.
+    def has_active_loan(self, account_id: int) -> bool:
         row = self.session.execute(
             text(
                 "SELECT 1 FROM loan l JOIN loan_status s ON s.id = l.status_id "

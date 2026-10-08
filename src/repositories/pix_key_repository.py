@@ -28,8 +28,8 @@ class PixKeyRepository:
         self.session.flush()
         return pix_key
 
-    def get_by_id(self, pix_key_id: UUID) -> Optional[PixKey]:
-        return self.session.query(PixKey).filter(PixKey.id == pix_key_id).first()
+    def get_by_key(self, pix_key_key: UUID) -> Optional[PixKey]:
+        return self.session.query(PixKey).filter(PixKey.key == pix_key_key).first()
 
     def get_active_by_value(self, key_value: str) -> Optional[PixKey]:
         return (

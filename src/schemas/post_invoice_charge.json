@@ -1,0 +1,17 @@
+{
+  "title": "PostInvoiceCharge",
+  "description": "Encargo definido pela IF sobre fatura vencida: rotativo ou parcelamento da fatura. O teto (Lei 14.690/2023) é conferido no controller.",
+  "type": "object",
+  "properties": {
+    "type": {
+      "enum": ["REVOLVING", "INSTALLMENT_PLAN"]
+    },
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    }
+  },
+  "required": ["type", "amount"],
+  "additionalProperties": false
+}

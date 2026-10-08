@@ -37,24 +37,24 @@ class CreditWalletController(BaseController):
 
     @retry_on_deadlock()
     def create(self, raw_account_id: str, payload: dict) -> dict:
-        account_id = parse_uuid(raw_account_id)
-        locked = self.account_repository.lock_customer_accounts([account_id]) if account_id is not None else {}
-        account = locked.get(account_id)
+        account_key = parse_uuid(raw_account_id)
+        locked = self.account_repository.lock_customer_accounts_by_key([account_key])
+        account = locked.get(account_key)
         if account is None:
             raise AccountNotFound(raw_account_id)
 
         if account.status.enumerator != AccountStatus.ACTIVE:
-            raise AccountNotActive(account.id, account.status.enumerator)
+            raise AccountNotActive(account.key, account.status.enumerator)
 
         if self.wallet_repository.get_live_by_account(account.id) is not None:
-            raise CreditWalletAlreadyExists(account.id)
+            raise CreditWalletAlreadyExists(account.key)
 
         try:
             wallet = self.wallet_repository.create(account.id, payload)
         except IntegrityError:
             # O índice parcial ux_credit_wallet_live é a última palavra.
             self.session.rollback()
-            raise CreditWalletAlreadyExists(account.id)
+            raise CreditWalletAlreadyExists(account_key)
 
         self._outbox(wallet, None)
         self.session.commit()
@@ -100,15 +100,15 @@ class CreditWalletController(BaseController):
         return {"items": [CardDTO.invoice_to_dict(invoice) for invoice in invoices]}
 
     def get_invoice(self, raw_invoice_id: str) -> dict:
-        invoice_id = parse_uuid(raw_invoice_id)
-        invoice = self.invoice_repository.get_by_id(invoice_id) if invoice_id is not None else None
+        invoice_key = parse_uuid(raw_invoice_id)
+        invoice = self.invoice_repository.get_by_key(invoice_key) if invoice_key is not None else None
         if invoice is None:
             raise InvoiceNotFound(raw_invoice_id)
         return CardDTO.invoice_to_dict(invoice, with_items=True)
 
     def _get_or_raise(self, raw_wallet_id: str) -> CreditWallet:
-        wallet_id = parse_uuid(raw_wallet_id)
-        wallet = self.wallet_repository.get_by_id(wallet_id) if wallet_id is not None else None
+        wallet_key = parse_uuid(raw_wallet_id)
+        wallet = self.wallet_repository.get_by_key(wallet_key) if wallet_key is not None else None
         if wallet is None:
             raise CreditWalletNotFound(raw_wallet_id)
         return wallet
@@ -123,6 +123,6 @@ class CreditWalletController(BaseController):
         self.outbox_repository.add(
             OutboxEvent.CREDIT_WALLET_STATUS_CHANGED,
             "credit_wallet",
-            wallet.id,
+            wallet,
             {"status": wallet.status.enumerator, "old_status": old_status},
         )

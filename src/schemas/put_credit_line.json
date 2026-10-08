@@ -1,0 +1,24 @@
+{
+  "title": "PutCreditLine",
+  "description": "Linha de microcrédito do patrimônio, informada pela IF. Formato aqui; os tetos MPO (R$ 21 mil, 4% a.m., TAC 3%) viram 422 QIT001055 no controller.",
+  "type": "object",
+  "properties": {
+    "total_limit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "monthly_interest_rate": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 1
+    },
+    "origination_fee_rate": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    }
+  },
+  "required": ["total_limit", "monthly_interest_rate", "origination_fee_rate"],
+  "additionalProperties": false
+}

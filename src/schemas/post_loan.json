@@ -1,0 +1,27 @@
+{
+  "title": "PostLoan",
+  "description": "Contratação de microcrédito. sfn_debt_declaration precisa ser true: o tomador declara dívida no SFN de até R$ 80 mil.",
+  "type": "object",
+  "properties": {
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "installment_count": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 24
+    },
+    "purpose": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255
+    },
+    "sfn_debt_declaration": {
+      "const": true
+    }
+  },
+  "required": ["amount", "installment_count", "purpose", "sfn_debt_declaration"],
+  "additionalProperties": false
+}

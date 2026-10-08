@@ -1,0 +1,19 @@
+{
+  "title": "PostLoanSimulation",
+  "description": "Simulação de microcrédito: 2 a 24 parcelas, a cada 30 dias (60 a 720 dias, Res. CMN 4.854/2020).",
+  "type": "object",
+  "properties": {
+    "amount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000000000
+    },
+    "installment_count": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 24
+    }
+  },
+  "required": ["amount", "installment_count"],
+  "additionalProperties": false
+}

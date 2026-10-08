@@ -633,3 +633,168 @@ class InvalidRelationship(QIException):
         description = f"Invalid customer relationship: {reason}."
         translation = "Vínculo entre titulares inválido."
         super().__init__(title, self.code, http_status, description, translation)
+
+
+# ════════════════════════════════════════════════════════════════════
+# Etapa 2 — microcrédito · Etapa 3 — fatura
+# ════════════════════════════════════════════════════════════════════
+
+
+class CreditLineNotAtRoot(QIException):
+    """EI/MEI não tem linha própria: usa a do dono (patrimônio único)."""
+
+    code = "QIT001053"
+
+    def __init__(self) -> None:
+        title = "Credit line belongs to the owner"
+        http_status = 422
+        description = "An EI/MEI shares the owner's credit line. Set the line on the owner (NATURAL) customer."
+        translation = "EI/MEI usa a linha de crédito do dono. Informe a linha na pessoa física."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class CustomerNotEligible(QIException):
+    code = "QIT001054"
+
+    def __init__(self) -> None:
+        title = "CUSTOMER_NOT_ELIGIBLE"
+        http_status = 422
+        description = "Borrower annual revenue is above the microcredit ceiling (36000000 cents)."
+        translation = "Renda ou receita anual acima do teto do microcrédito (R$ 360 mil)."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class OutOfMpoRule(QIException):
+    code = "QIT001055"
+
+    def __init__(self, field_name, rule) -> None:
+        title = "OUT_OF_MPO_RULE"
+        http_status = 422
+        description = f"{field_name} violates the MPO rule: {rule}."
+        translation = "Fora da regra do microcrédito produtivo orientado (Res. CMN 4.854/2020)."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class NoCreditLine(QIException):
+    code = "QIT001056"
+
+    def __init__(self) -> None:
+        title = "NO_CREDIT_LINE"
+        http_status = 422
+        description = "The borrower's estate has no credit line."
+        translation = "O patrimônio do tomador não tem linha de crédito."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class InsufficientCreditLimit(QIException):
+    code = "QIT001057"
+
+    def __init__(self, amount, available) -> None:
+        title = "INSUFFICIENT_LIMIT"
+        http_status = 422
+        description = f"Amount {amount} is above the available limit {available}."
+        translation = "Valor acima do limite disponível da linha."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class RegulatoryCapExceeded(QIException):
+    code = "QIT001058"
+
+    def __init__(self, balance_after, cap) -> None:
+        title = "REGULATORY_CAP_EXCEEDED"
+        http_status = 422
+        description = f"Microcredit balance of the estate would be {balance_after}, above the {cap} cap."
+        translation = "O saldo de microcrédito do patrimônio passaria de R$ 21 mil na IF."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class AmountAboveDue(QIException):
+    code = "QIT001059"
+
+    def __init__(self, amount, due) -> None:
+        title = "AMOUNT_ABOVE_DUE"
+        http_status = 422
+        description = f"Payment {amount} is above the amount due {due}."
+        translation = "Pagamento acima do saldo devedor do contrato."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class AmountAboveInvoice(QIException):
+    code = "QIT001060"
+
+    def __init__(self, amount, outstanding) -> None:
+        title = "AMOUNT_ABOVE_INVOICE"
+        http_status = 422
+        description = f"Payment {amount} is above the invoice outstanding amount {outstanding}."
+        translation = "Pagamento acima do saldo da fatura."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class RevolvingCapExceeded(QIException):
+    """Lei 14.690/2023: juros e encargos do rotativo não passam de 100% da dívida original."""
+
+    code = "QIT001061"
+
+    def __init__(self, total_charges, original_debt) -> None:
+        title = "REVOLVING_CAP_EXCEEDED"
+        http_status = 422
+        description = f"Charges would sum {total_charges}, above the original debt {original_debt}."
+        translation = "Juros e encargos passariam de 100% da dívida original."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class LoanNotFound(QIException):
+    code = "QIT001062"
+
+    def __init__(self, loan_id) -> None:
+        title = "Loan not found"
+        http_status = 404
+        description = f"Loan {loan_id} was not found."
+        translation = "Contrato não encontrado."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class LoanAlreadyPaidOff(QIException):
+    code = "QIT001063"
+
+    def __init__(self) -> None:
+        title = "Loan already paid off"
+        http_status = 409
+        description = "The loan is already paid off."
+        translation = "O contrato já está quitado."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class InvoiceAlreadyPaid(QIException):
+    code = "QIT001064"
+
+    def __init__(self) -> None:
+        title = "Invoice already paid"
+        http_status = 409
+        description = "The invoice is already paid."
+        translation = "A fatura já está paga."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class CreditLineNotFound(QIException):
+    code = "QIT001065"
+
+    def __init__(self, customer_id) -> None:
+        title = "Credit line not found"
+        http_status = 404
+        description = f"The estate of customer {customer_id} has no credit line."
+        translation = "O patrimônio não tem linha de crédito cadastrada."
+        super().__init__(title, self.code, http_status, description, translation)
+
+
+class InvoiceNotChargeable(QIException):
+    """Encargo do rotativo só existe sobre dívida vencida: fatura OVERDUE."""
+
+    code = "QIT001066"
+
+    def __init__(self, status) -> None:
+        title = "Invoice not chargeable"
+        http_status = 409
+        description = f"Invoice with status {status} does not accept charges. Only OVERDUE does."
+        translation = "Encargo só pode ser lançado em fatura vencida e não quitada."
+        super().__init__(title, self.code, http_status, description, translation)

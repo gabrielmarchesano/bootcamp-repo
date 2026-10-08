@@ -34,8 +34,8 @@ class CreditWalletRepository:
         self.session.flush()
         return wallet
 
-    def get_by_id(self, wallet_id: UUID) -> Optional[CreditWallet]:
-        return self.session.query(CreditWallet).filter(CreditWallet.id == wallet_id).first()
+    def get_by_key(self, wallet_key: UUID) -> Optional[CreditWallet]:
+        return self.session.query(CreditWallet).filter(CreditWallet.key == wallet_key).first()
 
     def get_live_by_account(self, account_id: UUID) -> Optional[CreditWallet]:
         """A carteira ACTIVE ou BLOCKED da conta (o índice parcial garante no máximo uma)."""

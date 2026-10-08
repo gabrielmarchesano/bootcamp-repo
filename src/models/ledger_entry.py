@@ -1,4 +1,4 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Identity, String, func
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity, String
 from sqlalchemy.dialects.postgresql import UUID
 
 from models.base import Base
@@ -27,21 +27,28 @@ class LedgerEntry(Base):
     DEBIT_PURCHASE = "DEBIT_PURCHASE"
     PURCHASE_REFUND = "PURCHASE_REFUND"
     REVERSAL = "REVERSAL"
- 
+    DISBURSEMENT = "DISBURSEMENT"
+    ORIGINATION_FEE = "ORIGINATION_FEE"
+    INSTALLMENT_PAYMENT = "INSTALLMENT_PAYMENT"
+    INVOICE_PAYMENT = "INVOICE_PAYMENT"
+
     # Referências
     REF_TRANSFER = "TRANSFER"
     REF_INCOMING_TRANSFER = "INCOMING_TRANSFER"
     REF_CARD_AUTHORIZATION = "CARD_AUTHORIZATION"
+    REF_LOAN = "LOAN"
+    REF_LOAN_PAYMENT = "LOAN_PAYMENT"
+    REF_INVOICE_PAYMENT = "INVOICE_PAYMENT"
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     operation_id = Column(UUID(as_uuid=True), nullable=False)
-    account_id = Column(UUID(as_uuid=True), ForeignKey("account.id"), nullable=False)
+    account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     amount = Column(BigInteger, nullable=False)
     type = Column(String, nullable=False)
     method = Column(String)
     balance_after = Column(BigInteger)
     reference_type = Column(String)
-    reference_id = Column(UUID(as_uuid=True))
+    reference_id = Column(BigInteger)  # id interno da entidade de referência
     external_id = Column(String)
     reversal_of_id = Column(BigInteger, ForeignKey("ledger_entry.id"))
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())

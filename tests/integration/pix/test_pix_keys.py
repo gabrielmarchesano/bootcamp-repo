@@ -96,7 +96,7 @@ class TestPixKeys:
         assert error["code"] == "QIT001021"
 
     def test_lookup_requires_account_id(self):
-        status, error = RequestGenerator._send("GET", "/pix_keys/fornecedor@externo.com")
+        status, error = RequestGenerator._send("GET", "/pix_key/fornecedor@externo.com")
 
         assert status == 400
         assert error["code"] == "QIT000001"

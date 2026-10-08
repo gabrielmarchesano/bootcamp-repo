@@ -8,6 +8,8 @@ from models.credit_wallet_status import CreditWalletStatus
 from models.card_status import CardStatus
 from models.card_authorization_status import CardAuthorizationStatus
 from models.invoice_status import InvoiceStatus
+from models.loan_status import LoanStatus
+from models.installment_status import InstallmentStatus
 
 # Conta digital + microcrédito
 from models.customer import Customer
@@ -37,3 +39,8 @@ from models.card_authorization_event import CardAuthorizationEvent
 from models.invoice import Invoice
 from models.invoice_status_event import InvoiceStatusEvent
 from models.invoice_item import InvoiceItem
+from models.invoice_payment import InvoicePayment
+
+# Microcrédito
+from models.credit_line import CreditLine, CreditLineVersion
+from models.loan import Installment, InstallmentStatusEvent, Loan, LoanPayment, LoanStatusEvent, PaymentAllocation

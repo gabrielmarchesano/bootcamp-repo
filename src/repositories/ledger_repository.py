@@ -1,8 +1,8 @@
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from uuid import UUID, uuid4
 
-from sqlalchemy import tuple_
+from sqlalchemy import text, tuple_
 
 from database import Context
 from models import Account, LedgerEntry
@@ -28,7 +28,7 @@ class LedgerRepository:
     def __init__(self, context: Context) -> None:
         self.session = context.db_session
 
-    def post(self, legs: List[LedgerLeg], reference_type: str, reference_id: UUID) -> UUID:
+    def post(self, legs: List[LedgerLeg], reference_type: str, reference_id: int) -> UUID:
         """Grava uma operação inteira: todas as pernas, com o mesmo operation_id.
 
         Para conta de CLIENTE, atualiza o saldo materializado e carimba o
@@ -68,8 +68,39 @@ class LedgerRepository:
 
         return operation_id
 
+    # Tabela e coluna pública de cada reference_type. A autorização de
+    # cartão é conhecida fora pelo id da rede (authorization_id), não pela key.
+    REFERENCE_TABLES = {
+        LedgerEntry.REF_TRANSFER: ("transfer", "key"),
+        LedgerEntry.REF_INCOMING_TRANSFER: ("incoming_transfer", "key"),
+        LedgerEntry.REF_CARD_AUTHORIZATION: ("card_authorization", "authorization_id"),
+        LedgerEntry.REF_LOAN: ("loan", "key"),
+        LedgerEntry.REF_LOAN_PAYMENT: ("loan_payment", "key"),
+        LedgerEntry.REF_INVOICE_PAYMENT: ("invoice_payment", "key"),
+    }
+
+    def reference_keys(self, entries: List[LedgerEntry]) -> Dict[Tuple[str, int], str]:
+        """Traduz (reference_type, reference_id interno) no identificador público.
+
+        Uma consulta por tipo presente na página, não uma por linha.
+        """
+        ids_by_type: Dict[str, set] = {}
+        for entry in entries:
+            if entry.reference_type is not None and entry.reference_id is not None:
+                ids_by_type.setdefault(entry.reference_type, set()).add(entry.reference_id)
+
+        keys = {}
+        for reference_type, ids in ids_by_type.items():
+            table, column = self.REFERENCE_TABLES[reference_type]
+            rows = self.session.execute(
+                text(f"SELECT id, {column} FROM {table} WHERE id = ANY(:ids)"), {"ids": list(ids)}
+            ).all()
+            for row_id, public in rows:
+                keys[(reference_type, row_id)] = str(public)
+        return keys
+
     def list_statement(
-        self, account_id: UUID, limit: int, after: Optional[Tuple[datetime, str]]
+        self, account_id: int, limit: int, after: Optional[Tuple[datetime, str]]
     ) -> List[LedgerEntry]:
         """Uma página do extrato, do mais novo para o mais antigo, por keyset.
 

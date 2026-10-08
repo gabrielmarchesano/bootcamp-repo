@@ -11,7 +11,7 @@ class OutboxEvent(Base):
 
     Se a transação dá rollback, o evento some junto; se dá commit, ele
     existe. Não há como a IF ser avisada de algo que não aconteceu. Quem
-    envia é o job dispatch_outbox_events (próximo sprint).
+    envia é o job dispatch_outbox_events (src/jobs).
     """
 
     __tablename__ = "outbox_event"
@@ -27,6 +27,14 @@ class OutboxEvent(Base):
     CREDIT_WALLET_STATUS_CHANGED = "baas.credit_wallet.status_change"
     CARD_STATUS_CHANGED = "baas.card.status_change"
     CARD_AUTHORIZATION = "baas.card.authorization"
+    CREDIT_LINE_CHANGED = "baas.credit_line.change"
+    LOAN_CONTRACTED = "baas.loan.contracted"
+    LOAN_PAYMENT = "baas.loan.payment"
+    LOAN_PAID_OFF = "baas.loan.paid_off"
+    INSTALLMENT_OVERDUE = "baas.installment.overdue"
+    INVOICE_STATUS_CHANGED = "baas.invoice.status_change"
+    INVOICE_PAYMENT = "baas.invoice.payment"
+    INVOICE_CHARGE = "baas.invoice.charge"
  
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)

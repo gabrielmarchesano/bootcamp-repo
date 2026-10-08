@@ -25,8 +25,8 @@ class CardRepository:
         self.session.flush()
         return card
 
-    def get_by_id(self, card_id: UUID) -> Optional[Card]:
-        return self.session.query(Card).filter(Card.id == card_id).first()
+    def get_by_key(self, card_key: UUID) -> Optional[Card]:
+        return self.session.query(Card).filter(Card.key == card_key).first()
 
     def list_by_account(self, account_id: UUID) -> List[Card]:
         return self.session.query(Card).filter(Card.account_id == account_id).order_by(Card.created_at).all()
