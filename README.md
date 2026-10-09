@@ -562,7 +562,7 @@ O resultado sai assim:
 ```
 tests/integration/test_healthcheck.py::TestHealthCheck::test_home PASSED
 ...
-============================= 194 passed in 24.44s =============================
+============================= 193 passed in 25.30s =============================
 ```
 
 Para rodar só um arquivo (ou só um teste), acrescente o caminho:
