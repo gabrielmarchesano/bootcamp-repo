@@ -60,6 +60,26 @@ class PayloadGenerator:
         )
 
     @staticmethod
+    def create_credit_line_payload(
+        total_limit: int = 2_000_000, monthly_interest_rate: float = 0.03, origination_fee_rate: float = 0.02
+    ) -> dict:
+        """Linha de microcrédito dentro da regra MPO (≤ R$ 21 mil, ≤ 4% a.m., TAC ≤ 3%)."""
+        return {
+            "total_limit": total_limit,
+            "monthly_interest_rate": monthly_interest_rate,
+            "origination_fee_rate": origination_fee_rate,
+        }
+
+    @staticmethod
+    def create_loan_payload(amount: int = 500_000, installment_count: int = 6, purpose: str = "capital de giro") -> dict:
+        return {
+            "amount": amount,
+            "installment_count": installment_count,
+            "purpose": purpose,
+            "sfn_debt_declaration": True,
+        }
+
+    @staticmethod
     def create_tef_payload(source_account_id: str, destination_account_id: str, amount: int) -> dict:
         return {
             "source_account_id": source_account_id,
@@ -134,14 +154,19 @@ class PayloadGenerator:
         return payload
 
     @staticmethod
-    def create_credit_wallet_payload(total_limit: int = 500_000, closing_day: int = 10, due_day: int = 20) -> dict:
-        return {
+    def create_credit_wallet_payload(
+        total_limit: int = 500_000, closing_day: int = 10, due_day: int = 20, autopay: bool = None
+    ) -> dict:
+        payload = {
             "total_limit": total_limit,
             "closing_day": closing_day,
             "due_day": due_day,
             "monthly_interest_rate": 0.08,
             "fine_rate": 0.02,
         }
+        if autopay is not None:
+            payload["autopay"] = autopay
+        return payload
 
     @staticmethod
     def create_card_payload(card_type: str = "VIRTUAL", functions: str = "MULTIPLE") -> dict:

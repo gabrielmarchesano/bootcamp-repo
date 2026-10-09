@@ -65,13 +65,16 @@ class InvoiceRepository:
 
     def charges_total(self, invoice: Invoice) -> int:
         """Encargos (rotativo/parcelamento) já lançados nesta fatura."""
-        return self.session.execute(
-            text(
-                "SELECT COALESCE(SUM(amount), 0) FROM invoice_item "
-                "WHERE invoice_id = :invoice_id AND type = 'REVOLVING_CHARGE'"
-            ),
-            {"invoice_id": invoice.id},
-        ).scalar_one()
+        # SUM de BIGINT volta NUMERIC (Decimal): vira int para não vazar no JSON do outbox.
+        return int(
+            self.session.execute(
+                text(
+                    "SELECT COALESCE(SUM(amount), 0) FROM invoice_item "
+                    "WHERE invoice_id = :invoice_id AND type = 'REVOLVING_CHARGE'"
+                ),
+                {"invoice_id": invoice.id},
+            ).scalar_one()
+        )
 
     def add_payment(self, invoice: Invoice, source: str, amount: int, idempotency_key=None, request_hash=None):
         payment = InvoicePayment()

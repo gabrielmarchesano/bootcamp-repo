@@ -43,13 +43,15 @@ class CreditLineRepository:
         Lê a view vw_microcredit_balance: soma a PF, o EI/MEI dela e todas as
         contas de cada um. Premissa D1 da RFC: o teto conta o principal.
         """
-        return self.session.execute(
+        # SUM de BIGINT volta NUMERIC (Decimal): vira int para não vazar no JSON do outbox.
+        balance = self.session.execute(
             text(
                 "SELECT COALESCE(microcredit_balance, 0) FROM vw_microcredit_balance "
                 "WHERE exposure_customer_id = :customer_id"
             ),
             {"customer_id": exposure_customer_id},
-        ).scalar() or 0
+        ).scalar()
+        return int(balance or 0)
 
     def create(self, exposure_customer_id: int, data: dict, available_limit: int) -> CreditLine:
         line = CreditLine()
