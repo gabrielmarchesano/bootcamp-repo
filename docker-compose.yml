@@ -42,6 +42,13 @@ services:
       BANKSLIP_API_URL: ${BANKSLIP_API_URL:-http://localhost:8080}
       BANKSLIP_API_INTERNAL_TOKEN: ${BANKSLIP_API_INTERNAL_TOKEN:-default_token}
       BANKSLIP_API_TIMEOUT: ${BANKSLIP_API_TIMEOUT:-5}
+      # Webhook da IF (job dispatch_outbox_events). Sem IF_WEBHOOK_URL, o job
+      # roda em modo mock: registra no log e considera o evento entregue.
+      # Aponte IF_WEBHOOK_URL para um mock server (ou webhook de verdade) para
+      # entregar os eventos. host.docker.internal alcança a sua maquina.
+      IF_WEBHOOK_URL: ${IF_WEBHOOK_URL:-}
+      IF_WEBHOOK_TOKEN: ${IF_WEBHOOK_TOKEN:-default_token}
+      IF_WEBHOOK_TIMEOUT: ${IF_WEBHOOK_TIMEOUT:-5}
     volumes:
       # Monta o codigo pra dentro do container: salvou o arquivo,
       # a API recarrega sozinha (o --reload ali embaixo).
