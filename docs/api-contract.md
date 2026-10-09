@@ -94,7 +94,7 @@ Pix e TED seguem o padrão da API da QI Tech (docs.qitech.com.br), **sem integra
 | POST | `/webhook/spi` | `event`: `RECEIVED` (`external_id, amount, destination_account, sender, pix_transfer_type?, receiver_pix_key?, pix_message?, original_end_to_end_id` se `REVERSAL`) · `SETTLED` (`end_to_end_id`) · `REJECTED` (`end_to_end_id, error_code, error_description?`) | **200 sempre** | 400 · 403 |
 | POST | `/webhook/str` | `event`: `RECEIVED` (como o SPI) · `SETTLED` · `RETURNED` (`str_control_number, reason?`) | **200 sempre** | 400 · 403 |
 
-**Regras que o banco garante** (testadas em `tests/integration/database`): o `end_to_end_id` do Pix por chave tem de vir de uma consulta da **mesma conta** (FK composta) e vale para **uma** transferência (UNIQUE); formato BCB `E|D + ISPB + yyyyMMddHHmm + 11`; devolução sempre com entrada original e motivo.
+**Regras que o banco garante** (provadas pela API em `tests/integration/rules/test_guarantees.py`): o `end_to_end_id` do Pix por chave tem de vir de uma consulta da **mesma conta** (FK composta) e vale para **uma** transferência (UNIQUE); formato BCB `E|D + ISPB + yyyyMMddHHmm + 11`; devolução sempre com entrada original e motivo.
 
 **Lançamentos.** Pix externo: `PIX_SENT −amount cliente / +amount SPI_SETTLEMENT`. Pix on-us: `PIX_SENT / PIX_RECEIVED` entre as contas. Devolução: `PIX_REVERSAL_SENT` e `PIX_REVERSAL_RECEIVED`. TED: `TED_SENT` contra `STR_SETTLEMENT`. Pix rejeitado devolve valor e tarifa (`REVERSAL`). TED devolvida devolve só o valor: a TED foi executada.
 
