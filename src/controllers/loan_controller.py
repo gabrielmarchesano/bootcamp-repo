@@ -525,8 +525,6 @@ class LoanController(BaseController):
             interest += allocation.interest
 
         loan.outstanding_principal = max(loan.outstanding_principal - principal, 0)
-        # Só o principal volta ao limite — e à linha do PATRIMÔNIO.
-        line.available_limit = min(line.available_limit + principal, line.total_limit)
 
         cash = principal + interest
         if cash > 0:
@@ -540,6 +538,15 @@ class LoanController(BaseController):
             self.ledger_repository.post(legs, LedgerEntry.REF_LOAN_PAYMENT, payment.id)
 
         self.session.flush()
+
+        # Só o principal volta ao limite — e à linha do PATRIMÔNIO. Recalcula
+        # da mesma forma que o PUT da linha: disponível = teto − saldo do
+        # patrimônio, nunca negativo. Somar o principal pago ao disponível
+        # deixava a linha voltar acima do teto quando a IF a reduziu abaixo do
+        # saldo devedor (o flush acima já gravou o novo outstanding_principal,
+        # então vw_microcredit_balance enxerga o saldo atualizado).
+        balance = self.credit_line_repository.microcredit_balance(loan.exposure_customer_id)
+        line.available_limit = max(line.total_limit - balance, 0)
 
         paid_off = all(item.status.enumerator == InstallmentStatus.PAID for item in loan.installments)
         if paid_off:
