@@ -7,9 +7,10 @@ import re
 # Um UUID cabe; uma frase com espaço, não.
 UUID_V4 = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-4[0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}")
 
+
 def is_valid_idempotency_key(idempotency_key: str) -> bool:
     return idempotency_key is not None and UUID_V4.fullmatch(idempotency_key) is not None
- 
+
 
 def request_hash(payload: dict) -> str:
     """O SHA-256 do corpo, em forma canônica.

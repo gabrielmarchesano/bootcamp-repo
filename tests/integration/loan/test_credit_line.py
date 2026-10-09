@@ -91,6 +91,32 @@ class TestCreditLine:
         line = ObjectGenerator.create_credit_line(borrower["customer_id"], total_limit=1_000_000)
         assert line["available_limit"] == 0, "nunca negativo"
 
+    def test_payment_after_lowering_does_not_reopen_limit_above_the_new_line(self):
+        """Bug 3.1: o pagamento não pode devolver limite acima do que a IF definiu.
+
+        Linha de R$ 20 mil, contrato de R$ 15 mil, IF reduz para R$ 10 mil,
+        pagamento de R$ 3 mil: o saldo (~R$ 12 mil) continua acima da linha,
+        então o disponível segue 0 e um novo contrato é recusado.
+        """
+        borrower = ObjectGenerator.create_borrower(total_limit=2_000_000)
+        loan = ObjectGenerator.create_loan(borrower["account_id"], amount=1_500_000)
+        ObjectGenerator.create_credit_line(borrower["customer_id"], total_limit=1_000_000)
+
+        status, payment = RequestGenerator.POST_loan_payment(
+            loan["loan_id"], {"amount": 300_000, "mode": "REDUCE_TERM"}, str(uuid4())
+        )
+        assert status == 201, payment
+
+        line = ObjectGenerator.credit_line_of(borrower["customer_id"])
+        assert line["microcredit_balance"] > line["total_limit"]
+        assert line["available_limit"] == 0
+
+        status, error = RequestGenerator.POST_loan(
+            borrower["account_id"], PayloadGenerator.create_loan_payload(100_000), str(uuid4())
+        )
+        assert status == 422
+        assert error["code"] == "QIT001057"
+
     def test_unknown_customer_and_missing_line_are_404(self):
         status, error = RequestGenerator.PUT_credit_line(str(uuid4()), PayloadGenerator.create_credit_line_payload())
         assert status == 404

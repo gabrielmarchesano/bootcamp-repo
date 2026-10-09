@@ -11,7 +11,6 @@ class IncomingTransferRepository:
         self.session = context.db_session
         self.enumerators = EnumeratorRepository(context)
 
-    
     def get_by_key(self, incoming_transfer_key: UUID) -> Optional[IncomingTransfer]:
         return self.session.query(IncomingTransfer).filter(IncomingTransfer.key == incoming_transfer_key).first()
 

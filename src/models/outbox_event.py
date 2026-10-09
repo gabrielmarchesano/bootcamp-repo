@@ -35,7 +35,6 @@ class OutboxEvent(Base):
     INVOICE_STATUS_CHANGED = "baas.invoice.status_change"
     INVOICE_PAYMENT = "baas.invoice.payment"
     INVOICE_CHARGE = "baas.invoice.charge"
- 
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     type = Column(String, nullable=False)

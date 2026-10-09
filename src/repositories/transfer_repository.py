@@ -67,7 +67,7 @@ class TransferRepository:
 
         self.session.flush()
         return transfer
-    
+
     def create_outgoing(
         self,
         idempotency_key: str,
@@ -81,7 +81,7 @@ class TransferRepository:
         **fields,
     ) -> Transfer:
         """Pix e TED de saída. Mesmo desenho da TEF: nasce com o evento null → status.
- 
+
         `fields` são as colunas de destino e de trilho (pix_key, end_to_end_id,
         destination_*, scheduled_for…). Quem decide quais vão é o controller;
         quem confere se a combinação faz sentido é o CHECK ck_destination_by_method.
@@ -99,13 +99,13 @@ class TransferRepository:
         transfer.status = self.enumerators.get(TransferStatus, status)
         if status == TransferStatus.COMPLETED:
             transfer.completed_at = func.now()
- 
+
         self.session.add(transfer)
         self._record_status_event(transfer, None, transfer.status, reason)
- 
+
         self.session.flush()
         return transfer
- 
+
     def generate_str_control_number(self) -> str:
         """Número de controle do STR, único por transferência.
 
@@ -117,10 +117,10 @@ class TransferRepository:
 
     def get_by_end_to_end_id(self, end_to_end_id: str) -> Optional[Transfer]:
         return self.session.query(Transfer).filter(Transfer.end_to_end_id == end_to_end_id).first()
- 
+
     def get_by_str_control_number(self, control_number: str) -> Optional[Transfer]:
         return self.session.query(Transfer).filter(Transfer.str_control_number == control_number).first()
- 
+
     def lock(self, transfer: Transfer) -> Transfer:
         """Trava a linha da transferência (depois das contas, na ordem global)."""
         return (
@@ -130,7 +130,7 @@ class TransferRepository:
             .with_for_update()
             .one()
         )
- 
+
     def update_status(self, transfer: Transfer, new_status: str, reason: Optional[str] = None) -> None:
         """Muda o status E grava o evento. A transição já foi conferida pelo controller."""
         old_status = transfer.status
@@ -139,10 +139,10 @@ class TransferRepository:
         if new_status == TransferStatus.COMPLETED:
             transfer.completed_at = func.now()
         self._record_status_event(transfer, old_status, transfer.status, reason)
- 
+
     def reversed_total(self, incoming_transfer_id: int) -> int:
         """Quanto já saiu (ou está saindo) em devolução desta entrada.
- 
+
         Conta tudo que não morreu: devolução REJECTED/FAILED/CANCELED não
         devolveu nada e não ocupa o teto.
         """

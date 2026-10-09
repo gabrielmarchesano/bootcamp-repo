@@ -11,13 +11,13 @@ from models.account_status import AccountStatus
 
 class Account(Base):
     __tablename__ = "account"
- 
+
     # Tipos (classificação: não muda, fica como texto + CHECK)
     CUSTOMER = "CUSTOMER"
     INTERNAL = "INTERNAL"
- 
+
     # Os status moram em AccountStatus (tabela account_status).
- 
+
     # Contas internas (seed do database.sql)
     LOAN_PORTFOLIO = "LOAN_PORTFOLIO"
     ORIGINATION_FEE_REVENUE = "ORIGINATION_FEE_REVENUE"
@@ -26,9 +26,9 @@ class Account(Base):
     SPI_SETTLEMENT = "SPI_SETTLEMENT"
     STR_SETTLEMENT = "STR_SETTLEMENT"
     CARD_SETTLEMENT = "CARD_SETTLEMENT"
- 
+
     DEFAULT_BRANCH = "0001"
- 
+
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
     type = Column(PgEnum("enum_account_type"), nullable=False)
@@ -42,14 +42,14 @@ class Account(Base):
     held_balance = Column(BigInteger)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
- 
+
     customer = relationship("Customer", back_populates="accounts", lazy="selectin")
- 
+
     # Na tabela o status é um número; aqui, um objeto com `.enumerator`.
     # "selectin" (consulta separada) e não "joined": o lock da conta usa
     # FOR UPDATE, e o Postgres recusa FOR UPDATE em cima de LEFT JOIN.
     status = relationship("AccountStatus", foreign_keys=[status_id], lazy="selectin")
- 
+
     # O caminho até o status atual. "select": só vai ao banco quando alguém
     # pede (o DTO do GET), e não a cada lock de conta numa transferência.
     # É uma relação de verdade (não viewonly) de propósito: é ela que faz o
@@ -61,8 +61,7 @@ class Account(Base):
         order_by="AccountStatusEvent.id",
         lazy="select",
     )
- 
+
     @property
     def available_balance(self) -> int:
         return self.balance - self.held_balance
- 

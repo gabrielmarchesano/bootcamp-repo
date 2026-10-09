@@ -250,8 +250,9 @@ def create_app() -> FastAPI:
     application.add_api_route("/card/captures", authorization_resource.on_post_capture, methods=["POST"])
     application.add_api_route("/card/refunds", authorization_resource.on_post_refund, methods=["POST"])
 
-    # E · Jobs agendados, sob demanda (o agendador da IF chama esta rota;
-    # pela linha de comando é `python -m jobs.<nome>`)
+    # E · Jobs agendados. Quem agenda é o src/scheduler.py (serviço
+    # `scheduler` do compose); esta rota fica para reprocessar na mão.
+    # Pela linha de comando: `python -m jobs.<nome>`.
     application.add_api_route("/job/{job_name}", job_resource.on_post, methods=["POST"])
 
     register_error_handlers(application)

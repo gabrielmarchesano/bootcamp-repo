@@ -1057,4 +1057,18 @@ INSERT INTO holiday (date, description) VALUES
     ('2027-11-02', 'Finados'),
     ('2027-11-15', 'Proclamacao da Republica'),
     ('2027-11-20', 'Dia da Consciencia Negra'),
-    ('2027-12-25', 'Natal');
+    ('2027-12-25', 'Natal'),
+    -- 2028 (contrato de ate 720 dias assinado hoje vence em 2028)
+    ('2028-01-01', 'Confraternizacao Universal'),
+    ('2028-02-28', 'Carnaval'),
+    ('2028-02-29', 'Carnaval'),
+    ('2028-04-14', 'Sexta-feira Santa'),
+    ('2028-04-21', 'Tiradentes'),
+    ('2028-05-01', 'Dia do Trabalho'),
+    ('2028-06-15', 'Corpus Christi'),
+    ('2028-09-07', 'Independencia do Brasil'),
+    ('2028-10-12', 'Nossa Senhora Aparecida'),
+    ('2028-11-02', 'Finados'),
+    ('2028-11-15', 'Proclamacao da Republica'),
+    ('2028-11-20', 'Dia da Consciencia Negra'),
+    ('2028-12-25', 'Natal');

@@ -539,20 +539,22 @@ class LoanController(BaseController):
 
         self.session.flush()
 
-        # Só o principal volta ao limite — e à linha do PATRIMÔNIO. Recalcula
-        # da mesma forma que o PUT da linha: disponível = teto − saldo do
-        # patrimônio, nunca negativo. Somar o principal pago ao disponível
-        # deixava a linha voltar acima do teto quando a IF a reduziu abaixo do
-        # saldo devedor (o flush acima já gravou o novo outstanding_principal,
-        # então vw_microcredit_balance enxerga o saldo atualizado).
-        balance = self.credit_line_repository.microcredit_balance(loan.exposure_customer_id)
-        line.available_limit = max(line.total_limit - balance, 0)
-
         paid_off = all(item.status.enumerator == InstallmentStatus.PAID for item in loan.installments)
         if paid_off:
             loan.outstanding_principal = 0
             self.loan_repository.update_status(loan, LoanStatus.PAID_OFF, reason)
             self.outbox_repository.add(OutboxEvent.LOAN_PAID_OFF, "loan", loan, {"account_id": str(account.key)})
+
+        # Só o principal volta ao limite — e à linha do PATRIMÔNIO. Recalcula
+        # da mesma forma que o PUT da linha: disponível = teto − saldo do
+        # patrimônio, nunca negativo. Somar o principal pago ao disponível
+        # deixava a linha voltar acima do teto quando a IF a reduziu abaixo do
+        # saldo devedor. Vem DEPOIS da quitação: o contrato quitado zera o
+        # outstanding_principal e sai da vw_microcredit_balance (só ACTIVE);
+        # o flush garante que a view já enxerga isso.
+        self.session.flush()
+        balance = self.credit_line_repository.microcredit_balance(loan.exposure_customer_id)
+        line.available_limit = max(line.total_limit - balance, 0)
 
         self.outbox_repository.add(
             OutboxEvent.LOAN_PAYMENT,
