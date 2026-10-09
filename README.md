@@ -91,57 +91,81 @@ cole um comando de cada vez.
 > 0. No PowerShell estes comandos não funcionam, porque lá `curl` é o
 > apelido de outro programa, com outra sintaxe.
 
-O roteiro abaixo é a vida de um cliente do banco em seis passos: abre
-conta, recebe um PIX, transfere para outra pessoa e confere o extrato.
-Todo dinheiro é em **centavos** (`50000` = R$ 500,00) e todo documento vai
-**só com dígitos**.
+O roteiro abaixo é a vida de um cliente do banco em sete passos: abre
+conta, recebe um PIX, transfere para outra pessoa, confere o extrato e
+pega um microcrédito. Todo dinheiro é em **centavos** (`50000` = R$ 500,00)
+e todo documento vai **só com dígitos**.
 
 #### 1. Abrir uma conta
 
+O cliente do banco é o **titular**: um CPF (pessoa natural, `NATURAL`) ou
+um CNPJ (pessoa jurídica, `LEGAL`). A Ana é pessoa física:
+
 ```bash
-curl -X POST http://localhost:3000/customers \
+curl -X POST http://localhost:3000/customer \
   -H "INTERNAL-TOKEN: default_token" \
   -H "Content-Type: application/json" \
   -d '{
-    "cpf": "39053344705",
+    "person_type": "NATURAL",
+    "document": "39053344705",
     "name": "Ana Souza",
     "birth_date": "1990-05-17",
-    "type": "MEI",
-    "cnpj": "11222333000181",
     "annual_revenue": 20000000
   }'
 ```
 
 ```json
-{"customer_id":"8fb8e377-bd8b-4942-b368-662beb8ec82b","account_id":"f1190d11-1836-451a-8a1d-ff8772e663c0","branch":"0001","account_number":"00000001","status":"ACTIVE","status_reason":null,"microcredit_eligible":true}
+{"customer_id":"d64144dd-1064-45d5-b174-d9e72e8c7708","account_id":"3480d0c5-b60d-4deb-9f0d-21905ab3e9cb","branch":"0001","account_number":"00000001","status":"ACTIVE","status_reason":null,"microcredit_eligible":true}
 ```
 
-Um pedido criou duas coisas: o **cliente** e a **conta** dele. Guarde o
-seu `account_id` (é o endereço da conta nesta API) e o seu
-`account_number` (é o endereço que o PIX usa para chegar até ela). Os
-seus nascem diferentes destes.
+Um pedido criou duas coisas: o **titular** e a primeira **conta** dele.
+Guarde o seu `customer_id`, o `account_id` (é o endereço da conta nesta
+API) e o `account_number` (é o endereço que o PIX usa para chegar até
+ela). Os seus nascem diferentes destes.
 
-Faturamento de R$ 200 mil/ano deixa a Ana elegível ao microcrédito: o
-teto é R$ 360 mil (`36000000` centavos).
+Renda de R$ 200 mil/ano deixa a Ana elegível ao microcrédito: o teto é
+R$ 360 mil (`36000000` centavos).
 
-> **Rodou duas vezes e levou 409?** É de propósito: o CPF não pode se
-> repetir (`QIT001010`). Para outra conta, troque CPF e CNPJ por números
-> **válidos de verdade** — os dígitos finais precisam bater com a conta.
+A Ana também é MEI. No banco, o MEI é **outro titular**: o CNPJ dela,
+com `legal_nature` `EI` e apontando para a PF dona. Ele tem conta
+própria, mas responde com o mesmo patrimônio da Ana — isso volta no
+passo 7.
+
+```bash
+curl -X POST http://localhost:3000/customer \
+  -H "INTERNAL-TOKEN: default_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "person_type": "LEGAL",
+    "document": "11222333000181",
+    "name": "Ana Souza Doces",
+    "legal_nature": "EI",
+    "owner_customer_id": "SEU_CUSTOMER_ID",
+    "annual_revenue": 20000000
+  }'
+```
+
+> **Rodou duas vezes e levou 409?** É de propósito: o documento não pode
+> se repetir (`QIT001010`). Para outro titular, troque o CPF ou o CNPJ
+> por números **válidos de verdade** — os dígitos finais precisam bater
+> com a conta.
 >
 > **E se a pessoa tiver 17 anos?** A conta nasce `REJECTED`, com 201, e
 > não com erro: a tentativa fica guardada, porque banco precisa de trilha
 > de auditoria. Com 80 anos ou mais, ou sendo pessoa politicamente
-> exposta (`"is_pep": true`), nasce `PENDING`, esperando revisão.
+> exposta (`"is_pep": true`), nasce `PENDING`, esperando revisão. O CPF
+> `52998224725` faz o papel de alguém em lista restritiva: nasce
+> `REJECTED` por KYC (`src/utils/kyc_mock.py`).
 
 #### 2. Ver a conta
 
 ```bash
-curl http://localhost:3000/accounts/SEU_ACCOUNT_ID \
+curl http://localhost:3000/account/SEU_ACCOUNT_ID \
   -H "INTERNAL-TOKEN: default_token"
 ```
 
 ```json
-{"account_id":"f1190d11-...","customer_id":"8fb8e377-...","branch":"0001","account_number":"00000001","status":"ACTIVE","status_reason":null,"balance":0,"held_balance":0,"available_balance":0,"microcredit_eligible":true,"created_at":"2026-10-01T15:21:03.778479-03:00"}
+{"account_id":"3480d0c5-...","customer_id":"d64144dd-...","branch":"0001","account_number":"00000001","status":"ACTIVE","status_reason":null,"status_events":[{"from_status":null,"to_status":"ACTIVE","reason":null,"created_at":"2026-10-09T11:36:47.292529-03:00"}],"balance":0,"held_balance":0,"available_balance":0,"microcredit_eligible":true,"created_at":"2026-10-09T11:36:47.292529-03:00"}
 ```
 
 Três saldos, e a diferença importa: `balance` é o que a conta tem,
@@ -156,7 +180,7 @@ papel do **SPI** (o sistema do Banco Central que liquida o PIX) é você,
 chamando o webhook:
 
 ```bash
-curl -X POST http://localhost:3000/webhooks/spi \
+curl -X POST http://localhost:3000/webhook/spi \
   -H "INTERNAL-TOKEN: default_token" \
   -H "Content-Type: application/json" \
   -d '{
@@ -169,7 +193,7 @@ curl -X POST http://localhost:3000/webhooks/spi \
 ```
 
 ```json
-{"incoming_transfer_id":"36abf9ec-ed98-4e21-a005-616855c69280","rail":"SPI","external_id":"E0001","status":"CREDITED","amount":50000}
+{"incoming_transfer_id":"b1e27679-a114-47c0-9c1e-cf69d65b96f6","rail":"SPI","pix_transfer_type":"MANUAL","external_id":"E0001","status":"CREDITED","amount":50000,"original_transfer_id":null}
 ```
 
 Repita o comando: a resposta é a mesma, e o saldo **não** dobra. O SPI
@@ -180,14 +204,14 @@ trilho só quer saber se a mensagem chegou.
 
 #### 4. Transferir para outra conta (TEF)
 
-Abra uma segunda conta (passo 1, com outro CPF) e transfira R$ 100,00
-da primeira para ela:
+Abra uma segunda conta (passo 1, com outro CPF — `11144477735`, por
+exemplo) e transfira R$ 100,00 da primeira para ela:
 
 ```bash
-curl -i -X POST http://localhost:3000/transfers \
+curl -i -X POST http://localhost:3000/transfer \
   -H "INTERNAL-TOKEN: default_token" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: minha-primeira-tef" \
+  -H "Idempotency-Key: 3f2b8c1e-5d4a-4e6b-9c7d-1a2b3c4d5e6f" \
   -d '{
     "source_account_id": "SEU_ACCOUNT_ID",
     "method": "TEF",
@@ -198,30 +222,32 @@ curl -i -X POST http://localhost:3000/transfers \
 
 ```
 HTTP/1.1 201 Created
-{"transfer_id":"a963ae06-...","method":"TEF","status":"COMPLETED","amount":10000,"fee":100,"source_account_id":"f1190d11-...","destination":{"account_id":"7b78a948-..."},"created_at":"2026-10-01T15:21:03.999865-03:00","completed_at":"2026-10-01T15:21:03.999865-03:00"}
+{"transfer_id":"ba60383c-...","request_control_key":"3f2b8c1e-5d4a-4e6b-9c7d-1a2b3c4d5e6f","method":"TEF","status":"COMPLETED","amount":10000,"fee":100,"source_account_id":"d7030ca3-...","on_us":true,"destination":{"account_id":"02b24e5d-..."},"created_at":"2026-10-09T11:37:31.752683-03:00","completed_at":"2026-10-09T11:37:31.752683-03:00"}
 ```
 
 Repare no `fee`: R$ 1,00 de tarifa, cobrada da origem. E rode o mesmo
 comando de novo, **igualzinho**: volta `200 OK`, com o mesmo corpo, e o
-dinheiro não sai outra vez. É o `Idempotency-Key`. Quem clica duas vezes
-no botão de "transferir" manda o mesmo pedido duas vezes — e a chave é o
-que deixa a API reconhecer a repetição. Sem o cabeçalho, a API recusa
-(`QIT001015`); com a mesma chave e um valor diferente, recusa também
-(`QIT001016`), porque aí não é repetição, é engano.
+dinheiro não sai outra vez. É o `Idempotency-Key`, um **UUID v4** que o
+cliente gera (`uuidgen` no terminal faz um). Quem clica duas vezes no
+botão de "transferir" manda o mesmo pedido duas vezes — e a chave é o
+que deixa a API reconhecer a repetição. Sem o cabeçalho, ou com algo que
+não é UUID v4, a API recusa (`QIT001015`); com a mesma chave e um valor
+diferente, recusa também (`QIT001016`), porque aí não é repetição, é
+engano.
 
 #### 5. Ver o extrato
 
 ```bash
-curl "http://localhost:3000/accounts/SEU_ACCOUNT_ID/statement" \
+curl "http://localhost:3000/account/SEU_ACCOUNT_ID/statement" \
   -H "INTERNAL-TOKEN: default_token"
 ```
 
 ```json
-{"account_id":"f1190d11-...","balance":39900,"held_balance":0,"available_balance":39900,
+{"account_id":"d7030ca3-...","balance":39900,"held_balance":0,"available_balance":39900,
  "items":[
-  {"entry_id":5,"type":"TRANSFER_FEE","method":"TEF","amount":-100,"balance_after":39900,"reference_type":"TRANSFER","reference_id":"a963ae06-...","external_id":null,"created_at":"..."},
-  {"entry_id":3,"type":"TEF_SENT","method":"TEF","amount":-10000,"balance_after":40000,"reference_type":"TRANSFER","reference_id":"a963ae06-...","external_id":null,"created_at":"..."},
-  {"entry_id":2,"type":"PIX_RECEIVED","method":"PIX","amount":50000,"balance_after":50000,"reference_type":"INCOMING_TRANSFER","reference_id":"36abf9ec-...","external_id":"E0001","created_at":"..."}],
+  {"entry_id":5,"type":"TRANSFER_FEE","method":"TEF","amount":-100,"balance_after":39900,"reference_type":"TRANSFER","reference_id":"ba60383c-...","external_id":null,"created_at":"..."},
+  {"entry_id":3,"type":"TEF_SENT","method":"TEF","amount":-10000,"balance_after":40000,"reference_type":"TRANSFER","reference_id":"ba60383c-...","external_id":null,"created_at":"..."},
+  {"entry_id":2,"type":"PIX_RECEIVED","method":"PIX","amount":50000,"balance_after":50000,"reference_type":"INCOMING_TRANSFER","reference_id":"fea6168a-...","external_id":"E0001","created_at":"..."}],
  "next_cursor":null}
 ```
 
@@ -242,14 +268,14 @@ resposta para "tem mais?".
 #### 6. Mandar um JSON torto
 
 ```bash
-curl -X POST http://localhost:3000/customers \
+curl -X POST http://localhost:3000/customer \
   -H "INTERNAL-TOKEN: default_token" \
   -H "Content-Type: application/json" \
   -d '{}'
 ```
 
 ```json
-{"title":"Bad Request","description":"'cpf' is a required property","translation":"Payload Inválido","code":"QIT000001"}
+{"title":"Bad Request","description":"'legal_nature' is a required property","translation":"Payload Inválido","code":"QIT000001"}
 ```
 
 **400**, e nada foi criado. Quem recusou não foi a regra de negócio: foi
@@ -260,10 +286,10 @@ reclamação andar.
 Agora um CPF com o formato certo e os dígitos errados:
 
 ```bash
-curl -X POST http://localhost:3000/customers \
+curl -X POST http://localhost:3000/customer \
   -H "INTERNAL-TOKEN: default_token" \
   -H "Content-Type: application/json" \
-  -d '{"cpf":"11122233344","name":"X","birth_date":"1990-01-01","type":"INDIVIDUAL","annual_revenue":0}'
+  -d '{"person_type":"NATURAL","document":"11122233344","name":"X","birth_date":"1990-01-01","annual_revenue":0}'
 ```
 
 ```json
@@ -281,7 +307,7 @@ O schema também recusa o que não conhece. Erre o nome de um parâmetro de
 propósito:
 
 ```bash
-curl "http://localhost:3000/accounts/SEU_ACCOUNT_ID/statement?limt=10" \
+curl "http://localhost:3000/account/SEU_ACCOUNT_ID/statement?limt=10" \
   -H "INTERNAL-TOKEN: default_token"
 ```
 
@@ -292,6 +318,80 @@ curl "http://localhost:3000/accounts/SEU_ACCOUNT_ID/statement?limt=10" \
 Sem essa recusa, o `limt` com a letra trocada seria ignorado e a página
 viria com o tamanho padrão, como se o pedido tivesse funcionado — o pior
 tipo de bug, o que não reclama.
+
+#### 7. Pegar um microcrédito
+
+Quem decide o crédito é a instituição financeira (IF): ela informa a
+linha do **patrimônio** da Ana — R$ 15 mil, 3% ao mês de juros e 2% de
+TAC (a tarifa de abertura):
+
+```bash
+curl -X PUT http://localhost:3000/customer/SEU_CUSTOMER_ID/credit_line \
+  -H "INTERNAL-TOKEN: default_token" \
+  -H "Content-Type: application/json" \
+  -d '{"total_limit": 1500000, "monthly_interest_rate": 0.03, "origination_fee_rate": 0.02}'
+```
+
+```json
+{"credit_line_id":"71ac8e8c-...","customer_id":"d64144dd-...","version":1,"total_limit":1500000,"available_limit":1500000,"microcredit_balance":0,"monthly_interest_rate":0.03,"origination_fee_rate":0.02,"updated_at":"..."}
+```
+
+A regra do microcrédito (Res. CMN 4.854/2020) está na API: limite acima
+de R$ 21 mil, juros acima de 4% ao mês ou TAC acima de 3% voltam **422**
+(`QIT001055`). E a linha é uma só para a Ana e o MEI dela: peça a do MEI
+(`GET /customer/CUSTOMER_ID_DO_MEI/credit_line`) e volta a mesma.
+
+Antes de contratar, simule — nada é gravado:
+
+```bash
+curl -X POST http://localhost:3000/account/SEU_ACCOUNT_ID/loan/simulation \
+  -H "INTERNAL-TOKEN: default_token" \
+  -H "Content-Type: application/json" \
+  -d '{"amount": 300000, "installment_count": 3}'
+```
+
+```json
+{"amount":300000,"installment_count":3,"term_days":90,"monthly_interest_rate":0.03,"effective_fee_rate":0.015,"origination_fee_amount":4500,"net_amount":295500,"effective_cost_monthly":0.037901,"effective_cost_annual":0.562684,
+ "installments":[
+  {"number":1,"due_date":"2026-11-09","principal_amount":97059,"interest_amount":9000,"total_amount":106059},
+  {"number":2,"due_date":"2026-12-08","principal_amount":99971,"interest_amount":6088,"total_amount":106059},
+  {"number":3,"due_date":"2027-01-07","principal_amount":102970,"interest_amount":3089,"total_amount":106059}]}
+```
+
+Três coisas para reparar. A TAC caiu para **1,5%**: abaixo de 120 dias
+ela é proporcional ao prazo (90/120 × 2%). As parcelas são **iguais**
+(sistema Price), mas os juros caem a cada mês, porque incidem sobre o
+que falta pagar. E o `effective_cost_monthly` (o CET) é maior que os 3%
+de juros: é o custo de verdade, com a TAC dentro.
+
+Para contratar, o mesmo corpo com `purpose` e a declaração de dívida no
+sistema financeiro — e, como todo POST que mexe com dinheiro, um
+`Idempotency-Key`:
+
+```bash
+curl -i -X POST http://localhost:3000/account/SEU_ACCOUNT_ID/loan \
+  -H "INTERNAL-TOKEN: default_token" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: 9b1d2c3e-4f5a-4b6c-8d7e-0f1a2b3c4d5e" \
+  -d '{"amount": 300000, "installment_count": 3, "purpose": "capital de giro", "sfn_debt_declaration": true}'
+```
+
+Volta `201` com o contrato e as parcelas, e os R$ 2.955,00 líquidos já
+estão na conta: no extrato aparecem o `DISBURSEMENT` (+3.000,00) e a
+`ORIGINATION_FEE` (−45,00). Agora tente pegar R$ 13 mil pela conta do
+MEI:
+
+```json
+{"title":"INSUFFICIENT_LIMIT","description":"Amount 1300000 is above the available limit 1200000.","translation":"Valor acima do limite disponível da linha.","code":"QIT001057"}
+```
+
+Sobraram R$ 12 mil — para os dois. O teto é do patrimônio, não da conta:
+se a Ana e o MEI pedissem ao mesmo tempo, um esperaria o outro, e a soma
+nunca passaria do limite.
+
+As parcelas vencem sozinhas: quem cobra é o **job** `collect_installments`,
+que roda uma vez por dia (seção "Todas as rotas", lá embaixo). Para pagar
+antes, ou quitar com desconto, é `POST /loan/{loan_id}/payment`.
 
 #### Esqueceu o `-H "INTERNAL-TOKEN: ..."`?
 
@@ -307,7 +407,7 @@ Repare no `-i` deste comando: ele mostra os **cabeçalhos** da resposta,
 não só o corpo.
 
 ```bash
-curl -i "http://localhost:3000/accounts/SEU_ACCOUNT_ID/statement?limit=1" \
+curl -i "http://localhost:3000/account/SEU_ACCOUNT_ID/statement?limit=1" \
   -H "INTERNAL-TOKEN: default_token"
 ```
 
@@ -327,8 +427,8 @@ docker compose logs api | grep 52d8e778
 ```
 
 ```
-[INFO] bootcamp-api.middlewares.request_logger [52d8e778-...] - ENTROU GET /accounts/f1190d11-.../statement?limit=1
-[INFO] bootcamp-api.middlewares.request_logger [52d8e778-...] - SAIU 200 GET /accounts/f1190d11-.../statement - 7.2 ms
+[INFO] bootcamp-api.middlewares.request_logger [52d8e778-...] - ENTROU GET /account/f1190d11-.../statement?limit=1
+[INFO] bootcamp-api.middlewares.request_logger [52d8e778-...] - SAIU 200 GET /account/f1190d11-.../statement - 7.2 ms
 ```
 
 Duas linhas, o mesmo nome nas duas — e nenhuma outra requisição usa esse
@@ -342,7 +442,7 @@ e usa o mesmo — é assim que se segue um único pedido atravessando vários
 sistemas:
 
 ```bash
-curl -i "http://localhost:3000/accounts/SEU_ACCOUNT_ID/statement?limit=1" \
+curl -i "http://localhost:3000/account/SEU_ACCOUNT_ID/statement?limit=1" \
   -H "INTERNAL-TOKEN: default_token" \
   -H "X-Request-ID: meu-teste-1"
 ```
@@ -359,38 +459,62 @@ lições de segurança que cabem em cinco linhas.
 
 ### Todas as rotas
 
-Trinta e oito endereços respondem hoje. O contrato completo — com corpo,
-erros e o que ainda vai ser construído (microcrédito, jobs) — está em
-**`docs/api-contract.md`**.
+Cinquenta e uma rotas respondem hoje. O contrato completo — com corpo,
+erros e regras de cada uma — está em **`docs/api-contract.md`**.
 
 | Método e rota | O que faz | Responde |
 |---|---|---|
 | `GET /` | diz qual serviço é este | `200` + nome e id |
 | `GET /health_check` | diz se a API está de pé | `204`, sem corpo |
-| `POST /customers` | cadastra o cliente e abre a conta | `201` + ids e status da conta |
-| `GET /customers/{id}` | busca o cliente | `200` + o cliente |
-| `PATCH /customers/{id}` | atualiza o faturamento (e a elegibilidade) | `200` + o cliente |
-| `GET /accounts/{id}` | busca a conta, com os três saldos | `200` + a conta |
-| `PATCH /accounts/{id}/status` | muda o status (`ACTIVE`, `REJECTED`, `BLOCKED`, `CLOSED`) | `200` + a conta |
-| `GET /accounts/{id}/statement` | extrato, do mais novo ao mais antigo | `200` + a página |
-| `GET /accounts/{id}/transfers` | transferências em que a conta é origem ou destino | `200` + a página |
-| `POST /transfers` | TEF — exige `Idempotency-Key` (UUID v4) | `201` (ou `200` na repetição) |
-| `GET /transfers/{id}` | busca uma transferência | `200` + a transferência |
-| `PATCH /transfers/{id}/cancel` | cancela um agendamento | `200` |
-| `POST /accounts/{id}/pix_keys` · `GET` · `DELETE …/{pix_key_id}` | chaves Pix da conta | `201` · `200` · `200` |
-| `GET /pix_keys/{chave}?account_id=` | consulta ao DICT (mock): devolve o `end_to_end_id` | `200` |
-| `POST /accounts/{id}/pix_transfers` | Pix por chave ou manual — exige `Idempotency-Key` | `201` on-us · `202` externo |
-| `POST /accounts/{id}/incoming_transfers/{id}/reversals` | devolve um Pix recebido | `202` |
-| `POST /accounts/{id}/ted_transfers` | TED agora ou agendada | `202` |
-| `POST /webhooks/spi` · `POST /webhooks/str` | papel dos trilhos: entrada, liquidação, rejeição, devolução | `200`, sempre |
-| `POST /accounts/{id}/credit_wallets` | carteira de crédito (limite, ciclo, encargos) | `201` |
-| `GET /credit_wallets/{id}` · `PATCH …/limit` · `PATCH …/status` | consulta e manutenção da carteira | `200` |
-| `GET /credit_wallets/{id}/invoices` · `GET /invoices/{id}` | faturas | `200` |
-| `POST /accounts/{id}/cards` · `GET /accounts/{id}/cards` | emite e lista cartões | `201` · `200` |
-| `GET /cards/{id}` · `PATCH …/activate` · `PATCH …/status` | consulta, ativação do físico, status | `200` |
-| `POST /cards/authorizations` | autorização da rede | `200`, sempre |
-| `GET /cards/authorizations/{id}` · `POST …/increments` · `POST …/reversals` | autorização: consulta, incremental, reversão | `200` |
-| `POST /cards/captures` · `POST /cards/refunds` | captura e estorno | `200` |
+| `POST /customer` | cadastra o titular (CPF ou CNPJ) e abre a primeira conta | `201` + ids e status da conta |
+| `GET /customer/{id}` · `PATCH /customer/{id}` | busca o titular · atualiza a renda (e a elegibilidade) | `200` |
+| `POST /customer/{id}/account` · `GET /customer/{id}/account` | abre mais uma conta · lista as contas do titular | `201` · `200` |
+| `POST /customer/{id}/relationship` | liga sócio, administrador ou procurador (PF) a uma PJ | `201` |
+| `GET /account/{id}` | busca a conta, com os três saldos | `200` + a conta |
+| `PATCH /account/{id}/status` | muda o status (`ACTIVE`, `REJECTED`, `BLOCKED`, `CLOSED`) | `200` + a conta |
+| `GET /account/{id}/statement` | extrato, do mais novo ao mais antigo | `200` + a página |
+| `PUT /customer/{id}/credit_line` · `GET` | linha de microcrédito do patrimônio | `200` |
+| `POST /account/{id}/loan/simulation` | simula o empréstimo, sem gravar | `200` |
+| `POST /account/{id}/loan` · `GET /account/{id}/loan` | contrata (exige `Idempotency-Key`) · lista os contratos | `201` · `200` |
+| `GET /loan/{id}` · `POST /loan/{id}/payment` | contrato com parcelas · pagamento avulso ou antecipado | `200` · `201` |
+| `POST /transfer` | TEF — exige `Idempotency-Key` (UUID v4) | `201` (ou `200` na repetição) |
+| `GET /transfer/{id}` · `PATCH /transfer/{id}/cancel` | busca a transferência · cancela um agendamento | `200` |
+| `GET /account/{id}/transfer` | transferências em que a conta é origem ou destino | `200` + a página |
+| `POST /account/{id}/pix_key` · `GET` · `DELETE …/pix_key/{pix_key_id}` | chaves Pix da conta | `201` · `200` · `200` |
+| `GET /pix_key/{chave}?account_id=` | consulta ao DICT (mock): devolve o `end_to_end_id` | `200` |
+| `POST /account/{id}/pix_transfer` | Pix por chave ou manual — exige `Idempotency-Key` | `201` on-us · `202` externo |
+| `POST /account/{id}/incoming_transfer/{id}/reversal` | devolve um Pix recebido | `202` |
+| `POST /account/{id}/ted_transfer` | TED agora ou agendada | `202` |
+| `POST /webhook/spi` · `POST /webhook/str` | papel dos trilhos: entrada, liquidação, rejeição, devolução | `200`, sempre |
+| `POST /account/{id}/credit_wallet` | carteira de crédito (limite, ciclo, encargos) | `201` |
+| `GET /credit_wallet/{id}` · `PATCH …/limit` · `PATCH …/status` | consulta e manutenção da carteira | `200` |
+| `GET /credit_wallet/{id}/invoice` · `GET /invoice/{id}` | faturas | `200` |
+| `POST /invoice/{id}/payment` · `POST /invoice/{id}/charge` | paga a fatura · lança encargo do rotativo — exigem `Idempotency-Key` | `201` |
+| `POST /account/{id}/card` · `GET /account/{id}/card` | emite e lista cartões | `201` · `200` |
+| `GET /card/{id}` · `PATCH …/activate` · `PATCH …/status` | consulta, ativação do físico, status | `200` |
+| `POST /card/authorization` | autorização da rede | `200`, sempre |
+| `GET /card/authorization/{id}` · `POST …/increment` · `POST …/reversal` | autorização: consulta, incremental, reversão | `200` |
+| `POST /card/captures` · `POST /card/refunds` | captura e estorno | `200` |
+| `POST /job/{nome}` | roda um dos 8 jobs agendados agora | `200` + o que processou |
+
+Os **jobs** são as tarefas do dia a dia do banco que ninguém pede: cobrar
+parcelas vencidas, fechar e vencer faturas, fazer o débito automático,
+executar TED agendada, conciliar com os trilhos, expirar autorizações de
+cartão e avisar a IF dos eventos. São oito, e todos podem rodar duas vezes
+sem mexer no dinheiro de novo. Quem agenda é a IF; para rodar um na mão:
+
+```bash
+curl -X POST http://localhost:3000/job/collect_installments \
+  -H "INTERNAL-TOKEN: default_token"
+```
+
+```json
+{"job":"collect_installments","result":{"processed":0,"outcomes":{}}}
+```
+
+O mesmo job roda pela linha de comando, dentro do container:
+`docker compose exec api python -m jobs.collect_installments`. A lista
+dos oito está em `docs/api-contract.md`.
 
 Todas, menos as duas de cima, exigem o `INTERNAL-TOKEN` (seção 6). As duas de cima
 são abertas — a primeira você já usou: foi ela que respondeu no
@@ -438,7 +562,7 @@ O resultado sai assim:
 ```
 tests/integration/test_healthcheck.py::TestHealthCheck::test_home PASSED
 ...
-============================== 52 passed in 5.24s ==============================
+============================= 194 passed in 24.44s =============================
 ```
 
 Para rodar só um arquivo (ou só um teste), acrescente o caminho:
@@ -456,9 +580,14 @@ verdade faria. Eles não espiam o código por dentro: nenhum deles importa
 nada de `src/`. Só sabem: "mandei isso, tem que voltar aquilo".
 
 > Uma exceção, e ela é honesta: `tests/utils/db_utils.py` fala com o
-> banco direto, por SQLAlchemy. Mas não para **montar** cenário — só
-> para **zerar** o banco entre testes que não podem se atrapalhar. O
-> cenário continua nascendo pela API, com `POST`.
+> banco direto, por SQLAlchemy, para duas coisas. A primeira é **zerar**
+> o banco entre testes que não podem se atrapalhar. A segunda é mexer no
+> **calendário**: vencer uma parcela, passar o fechamento de uma fatura,
+> expirar uma autorização — coisas que, pela API, só o tempo faz. Essas
+> escritas moram em helpers com nome (`tests/utils/object_generator.py`),
+> e nenhum teste **lê** o banco para conferir resultado: a conferência
+> vem sempre da resposta da API. O resto do cenário nasce pela API, com
+> `POST`.
 
 Isso tem uma consequência bonita: **este projeto inteiro já foi reescrito
 de um framework para outro, e nenhum teste precisou mudar.** Quando o
@@ -591,9 +720,11 @@ src/
   middlewares/     ← o que acontece com TODA requisição
   connectors/      ← as conversas com outros serviços
   utils/           ← as ferramentas que não são de nenhuma camada
+  jobs/            ← os 8 jobs agendados, um comando por job
+                     (`python -m jobs.<nome>`; a regra mora no controller)
 
 database/
-  database.sql     ← as tabelas, em SQL puro
+  database.sql     ← as tabelas, em SQL puro (o schema v7)
 
 tests/             ← os testes
 ```
@@ -670,7 +801,7 @@ Todo erro da API responde no mesmo formato, com um código próprio:
 ```json
 {
   "title": "Bad Request",
-  "description": "'cpf' is a required property",
+  "description": "'legal_nature' is a required property",
   "translation": "Payload Inválido",
   "code": "QIT000001"
 }
@@ -700,6 +831,10 @@ Todo erro da API responde no mesmo formato, com um código próprio:
 | `QIT001019` | 422  | limite noturno (20h–6h) excedido                      |
 | `QIT001020` | 404  | transferência não encontrada                          |
 
+Os demais códigos de domínio (`QIT001021` a `QIT001066`: Pix, TED,
+cartões, faturas, titular v7 e microcrédito) estão na tabela completa de
+`docs/api-contract.md`.
+
 `QIT001001`, `001002`, `001004`, `001005` e `001006` estão **aposentados**:
 eram do exemplo `sample_entity`, que saiu do projeto. Não reutilize —
 quem integrou programou em cima do número, e um número velho com
@@ -715,7 +850,7 @@ Os números não são sorteados. Eles vêm em duas faixas:
   precisa mexer neles.
 - **`QIT001…`** — os erros das **regras deste projeto**. Estão em
   `src/errors/custom_errors.py`, e é aí que os seus entram: o próximo
-  livre é o `QIT001021`.
+  livre é o `QIT001067`.
 
 Não repita um número. Se repetir, a API **não sobe** — tem uma checagem
 no start (`error_verification`, em `src/errors/base_error.py`) que

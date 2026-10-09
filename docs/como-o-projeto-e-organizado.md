@@ -1,7 +1,7 @@
 # Como o projeto é organizado
 
-Dentro de `src/` tem dez pastas. Para um programa que responde doze
-endereços, parece muita pasta — e no começo assusta mesmo.
+Dentro de `src/` tem onze pastas. Parece muita pasta — e no começo
+assusta mesmo.
 
 Este texto explica por que elas existem, o que cada uma pode e não pode
 fazer, e principalmente: **onde você mexe quando quer fazer alguma
@@ -15,7 +15,7 @@ estiver perdido.
 ## 1. O caminho de uma requisição
 
 Toda requisição atravessa as mesmas camadas, sempre na mesma ordem.
-Este é o `POST /customers`, que cadastra um cliente e abre a conta dele:
+Este é o `POST /customer`, que cadastra um titular e abre a conta dele:
 
 ```
   requisição chega
@@ -68,7 +68,8 @@ este texto.
 | `errors/` | definir cada erro: código, mensagem e status HTTP | ter regra de negócio dentro |
 | `middlewares/` | fazer algo em **toda** requisição (token, log, cabeçalho, identificador, sessão de banco) | conhecer uma rota específica |
 | `connectors/` | chamar um serviço de fora: endereço, timeout e o desembrulho da resposta | decidir regra de negócio, falar com o nosso banco |
-| `utils/` | ferramenta de uso geral — aqui, o logger e o identificador da requisição | virar o depósito do que não se sabe onde pôr |
+| `utils/` | ferramenta de uso geral — o logger, o identificador da requisição, a conta pura do microcrédito (`loan_math.py`), os mocks do KYC, do DICT e dos trilhos | virar o depósito do que não se sabe onde pôr |
+| `jobs/` | um arquivo por job agendado, que só chama o runner (`python -m jobs.<nome>`) | ter regra: a regra mora no `JobController` e nos controllers que ele usa |
 
 Um exemplo do que isso significa na prática: em
 `src/controllers/account_controller.py` você lê
@@ -155,14 +156,15 @@ combinado inteiro.
 | **criar uma rota nova** numa entidade que já existe | `src/resources/customer.py` (ou o resource da entidade) | registrar o endereço em `src/app.py`, e o método no controller se a regra for nova |
 | **mudar uma regra** ("não pode X") | `src/controllers/customer_controller.py` (ou o controller da entidade) | e um erro novo em `src/errors/custom_errors.py`, se precisar |
 | **consultar o banco de outro jeito** (filtrar, ordenar, contar) | `src/repositories/transfer_repository.py` (ou o repository da entidade) | o controller chama o método novo |
-| **criar uma tabela** | `database/database.sql` | depois `src/models/` e o `__init__.py` da pasta |
+| **criar uma tabela** | `database/database.sql` | depois `src/models/` e o `__init__.py` da pasta. Coluna de tipo `enum_*` no SQL vira `Column(PgEnum("enum_..."))` no model, nunca `String` (ver as armadilhas) |
 | **criar uma entidade inteira** (rota + regra + tabela) | um arquivo em cada pasta | `database.sql` → `models/` → `repositories/` → `controllers/` → `schemas/` → `resources/` → registrar em `src/app.py` |
 | **fazer algo em toda requisição** | `src/middlewares/` | registrar em `src/app.py` |
 | **chamar outro serviço** | `src/connectors/` | quem chama o connector é o controller, nunca o resource |
+| **criar um job agendado** | um método em `src/controllers/job_controller.py` | registrar no dicionário de `JobController.run` e criar `src/jobs/<nome>.py` (três linhas, copie um vizinho); pela API ele já responde em `POST /job/<nome>` |
 
-Quatro armadilhas que pegam quase todo mundo. A segunda e a terceira
+Cinco armadilhas que pegam quase todo mundo. Da segunda à quarta, elas
 custam caro pelo mesmo motivo: a mensagem de erro aponta para o
-sintoma, não para a causa. A quarta é pior ainda — nela não vem
+sintoma, não para a causa. A quinta é pior ainda — nela não vem
 mensagem nenhuma.
 
 **Criou um arquivo e o Python diz que não existe?** Cada pasta tem um
@@ -212,6 +214,22 @@ nasce de novo com o schema novo, ou continua com o antigo. Em sistema de
 verdade ninguém apaga o banco, claro: lá a mudança de schema entra por
 um comando aplicado no deploy, e é por isso que este projeto guarda o
 schema num arquivo versionado em vez de deixá-lo só dentro do banco.
+
+**Coluna `enum_*` mapeada como `String`?** O `database.sql` guarda os
+valores fixos (tipo de lançamento, tipo de chave Pix, natureza jurídica…)
+em tipos `enum_*` do Postgres. No model, essa coluna é
+`Column(PgEnum("enum_ledger_entry_type"))` — `src/models/types.py`. Com
+`String`, o cadastro de uma linha só até funciona, e por isso o erro se
+esconde: ele aparece quando o SQLAlchemy grava **várias linhas de uma
+vez** (as duas pernas de um lançamento, por exemplo) e manda o valor
+como texto. A resposta é um 500, e no log:
+
+```
+column "type" is of type enum_ledger_entry_type but expression is of type character varying
+```
+
+A mensagem fala de tipo, e você vai procurar um valor errado. O valor
+está certo; quem está errado é o model.
 
 **Mexeu numa dependência?** Então preste atenção, porque agora ela mora
 em dois lugares — e eles não se falam.
@@ -304,18 +322,25 @@ SAI.**
   de entrada é um arquivo escrito em **JSON Schema**, um padrão que
   existe fora do Python e que quem integra com a API consegue ler sem
   abrir o repositório. O preço é que o corpo chega como dicionário:
-  `payload["cpf"]` em vez de `payload.cpf`.
+  `payload["document"]` em vez de `payload.document`.
 - `src/dtos/customer_dto.py` faz o caminho de volta. O repository
   entrega o objeto do banco; o DTO devolve um dicionário simples, e é
   esse dicionário que vira o JSON da resposta.
 
 Abra os dois ao lado de `src/models/customer.py` e `src/models/account.py`
-e a diferença fica óbvia. No **banco**, cliente e conta são duas tabelas,
-ligadas por chave estrangeira, e os ids são objetos UUID. Na **resposta**
-do `POST /customers`, `customer_id`, `account_id`, `account_number` e o
-status da conta saem num dicionário só, plano, com os ids já em texto.
-Quem faz essa travessia é o DTO (`CustomerDTO.creation_to_dict`), e é
-por isso que ele existe.
+e a diferença fica óbvia. No **banco**, titular e conta são duas tabelas,
+ligadas por chave estrangeira, e cada linha tem **dois** identificadores:
+o `id` (um número, `BIGINT`), que é o alvo das chaves estrangeiras e
+nunca sai do banco, e a `key` (um UUID), que é o identificador público.
+Na **resposta** do `POST /customer`, `customer_id`, `account_id`,
+`account_number` e o status da conta saem num dicionário só, plano — e o
+`customer_id` dali é a `key`, não o `id`. Quem faz essa travessia é o DTO
+(`CustomerDTO.creation_to_dict`), e é por isso que ele existe.
+
+O caminho de volta é o mesmo: a API **recebe** a `key` no endereço
+(`/customer/{customer_key}`), o repository busca por ela (`get_by_key`)
+e, dali para dentro, o código só usa o `id`. Expor o `id` diria quantos
+clientes o banco tem e deixaria alguém adivinhar o do vizinho.
 
 Campo novo na resposta? Acrescente no `dtos/`. Nenhum outro arquivo
 precisa saber.

@@ -8,8 +8,10 @@ Infraestrutura de conta digital com microcrédito para uma instituição finance
 | --- | --- |
 | Time | Time do bootcamp-repo (base service + microcrédito) |
 | Data | 08/10/2026 |
-| Versão | 3.2 (esquema v7 com `id` BIGINT + `key` UUID e tipos `enum_*`; rotas do `src/app.py` atual; fluxos v8) |
+| Versão | 3.3 (esquema v7 com `id` BIGINT + `key` UUID e tipos `enum_*`; rotas do `src/app.py` atual, com microcrédito, fatura e jobs; fluxos v8) |
 | Stack | Python + FastAPI + PostgreSQL + Docker, sobre o bootcamp-base-api |
+
+**O que mudou da 3.2 para a 3.3.** Microcrédito, pagamento e encargo de fatura e os 8 jobs saíram do desenho e estão no `src/app.py` (51 rotas, com `POST /job/{job_name}`), com testes black box. As marcas de *previsto* e a lista de divergências de 08/10 saíram: tudo o que ela listava foi corrigido.
 
 **O que mudou da 3.1 para a 3.2.** As rotas passaram para o singular e com `{*_key}` no caminho, como estão no `src/app.py` (`/customer/{customer_key}/account`, `/card/authorization`, …). O `database/database.sql` trocou a PK UUID por `id BIGINT` interno + `key UUID` público e os `TEXT + CHECK` por tipos `enum_*` nativos. Microcrédito, pagamento e encargo de fatura e os jobs continuam no desenho, mas ainda não estão no `app.py`: aparecem marcados como **previstos**. Os códigos de erro e as respostas foram conferidos contra `src/errors` e os DTOs.
 
@@ -40,7 +42,7 @@ O coração do serviço é um ledger em partidas dobradas (`ledger_entry`) que n
 | Domínio | Tabelas | Papel |
 | --- | --- | --- |
 | Titular e conta | `customer`, `customer_relationship`, `account`, `fee`, `holiday` | Titular PF ou PJ (um CPF ou um CNPJ), sócios e procuradores da PJ, várias contas por titular, tarifa por segmento e calendário bancário |
-| Microcrédito | `credit_line`, `credit_line_version`, `loan`, `installment`, `loan_payment`, `payment_allocation` | Linha do patrimônio definida pela IF, contrato com tomador e patrimônio, cronograma Price, cobrança e antecipação (tabelas prontas; rotas previstas) |
+| Microcrédito | `credit_line`, `credit_line_version`, `loan`, `installment`, `loan_payment`, `payment_allocation` | Linha do patrimônio definida pela IF, contrato com tomador e patrimônio, cronograma Price, cobrança e antecipação |
 | Pix e transferências | `pix_key`, `pix_key_inquiry`, `transfer`, `incoming_transfer` | Chaves Pix, consulta ao DICT, TEF, Pix e TED de saída, devolução de Pix, Pix e TED recebidos |
 | Cartões | `credit_wallet`, `card`, `card_authorization`, `card_authorization_event`, `invoice`, `invoice_item`, `invoice_payment` | Carteira de crédito com um limite e uma fatura para todos os cartões, autorização (HOLD ou reserva), captura, estorno e fatura |
 | Estados (todos os domínios) | 12 enumeradoras `*_status` e 9 históricos `*_status_event` | Estado que não está na tabela o banco recusa; toda troca de status vira um evento append-only |
@@ -83,7 +85,7 @@ Alternativas descartadas:
 
 ### Rotas
 
-O `src/app.py` registra **41 rotas**; outras **9** (microcrédito, pagamento e encargo de fatura) estão no desenho e marcadas como *prevista* — ainda não têm resource nem controller, e o caminho proposto já segue o padrão do `app.py` (singular, `{*_key}`). Nenhum dos 8 jobs está implementado.
+O `src/app.py` registra **51 rotas**, todas no padrão singular com `{*_key}`: as de titular e conta, microcrédito, transferências, cartões e faturas, e `POST /job/{job_name}`, que dispara um dos 8 jobs.
 
 Regras que valem para todas as rotas:
 
@@ -114,7 +116,7 @@ Regras que valem para todas as rotas:
 | PATCH | `/account/{account_key}/status` | Muda o status pela máquina de estados, com a conta travada: `PENDING → ACTIVE \| REJECTED`, `ACTIVE → BLOCKED \| CLOSED`, `BLOCKED → ACTIVE \| CLOSED`; `REJECTED` e `CLOSED` são finais. Cada troca grava `account_status_event` | `status` (`ACTIVE` \| `REJECTED` \| `BLOCKED` \| `CLOSED`), `reason` | `200` com a conta; `400 QIT000001`; `404 QIT001009`; `409 QIT001012` transição inválida, `QIT001014` encerrar com saldo, HOLD ou contrato ativo |
 | GET | `/account/{account_key}/statement` | Extrato do mais novo ao mais antigo, por keyset. Compra no crédito fica na fatura; HOLD aparece só em `held_balance` | `limit` (1 a 100, padrão 10), `cursor` (opaco) | `200` com `account_id`, `balance`, `held_balance`, `available_balance`, `items` (`entry_id`, `type`, `method`, `amount`, `balance_after`, `reference_type`, `reference_id`, `external_id`, `created_at`) e `next_cursor`; `400 QIT000001`, `QIT000010` cursor adulterado; `404 QIT001009` |
 
-**B · Microcrédito** — *prevista*: nenhuma rota abaixo está no `app.py`. As tabelas existem no banco e o `PATCH /account/{account_key}/status` já recusa encerrar conta com contrato ativo.
+**B · Microcrédito**
 
 | Método | Caminho | O que faz | Entrada | Saídas |
 | --- | --- | --- | --- | --- |
@@ -167,10 +169,10 @@ Tarifa vigente por `fee_segment` (tabela `fee`, premissa do time): TEF R$ 1,00, 
 | POST | `/card/authorization/{authorization_key}/reversal` | Desfazimento total (`REVERSED`) ou parcial (segue `APPROVED`): solta HOLD ou reserva. Idempotente por `request_id` | `request_id`, `amount`? (padrão: todo o autorizado) | `200`; `400 QIT000010` acima do autorizado; `404 QIT001046`; `409 QIT001047` se não está `APPROVED` |
 | POST | `/card/captures` | Captura (pode haver várias; o valor não é limitado ao autorizado). Débito solta o HOLD e lança `DEBIT_PURCHASE` contra `CARD_SETTLEMENT` (pode negativar a conta); crédito troca a reserva pelo valor e lança as parcelas nas faturas. Idempotente por `capture_id` | `capture_id`, `authorization_id`, `amount` | `200` com a autorização `CAPTURED`; `404 QIT001046`; `409 QIT001047` se não está `APPROVED` ou `CAPTURED` |
 | POST | `/card/refunds` | Estorno como evento (`REFUND` ou `PARTIAL_REFUND`); a autorização segue `CAPTURED`. Débito lança `PURCHASE_REFUND`; crédito devolve limite e lança item negativo na fatura do ciclo. Idempotente por `refund_id` | `refund_id`, `authorization_id`, `amount` | `200`; `404 QIT001046`; `409 QIT001047` se não está `CAPTURED`; `422 QIT001035` estorno acima do capturado |
-| POST | `/invoice/{invoice_key}/payment` | *Prevista.* Paga a fatura, total ou parcial, e devolve o limite da carteira | `Idempotency-Key`; `amount` | `201` com `status` (`PAID` \| `PARTIALLY_PAID`) e `remaining_amount`; `200` repetição; `400 QIT001015`; `404 QIT001048`; `409 QIT001064` fatura paga, `QIT001016`; `422 QIT001060` acima da fatura, `QIT001017` saldo |
-| POST | `/invoice/{invoice_key}/charge` | *Prevista.* Lança encargo definido pela IF, com o teto do rotativo (Lei 14.690/2023) | `Idempotency-Key`; `type` (`REVOLVING` \| `INSTALLMENT_PLAN`), `amount` | `201`; `404 QIT001048`; `422 QIT001061` acima do teto do rotativo |
+| POST | `/invoice/{invoice_key}/payment` | Paga a fatura, total ou parcial, e devolve o limite da carteira | `Idempotency-Key`; `amount` | `201` com `status` (`PAID` \| `PARTIALLY_PAID`) e `remaining_amount`; `200` repetição; `400 QIT001015`; `404 QIT001048`; `409 QIT001064` fatura paga, `QIT001016`; `422 QIT001060` acima da fatura, `QIT001017` saldo |
+| POST | `/invoice/{invoice_key}/charge` | Lança encargo definido pela IF na fatura `OVERDUE`, com o teto do rotativo (Lei 14.690/2023) | `Idempotency-Key`; `type` (`REVOLVING` \| `INSTALLMENT_PLAN`), `amount` | `201` com a fatura e o encargo; `200` repetição; `400 QIT001015`; `404 QIT001048`; `409 QIT001066` fatura não está `OVERDUE`, `QIT001016`; `422 QIT001061` acima do teto do rotativo |
 
-**Jobs agendados** — *previstos*: nenhum está implementado (não há módulo de jobs nem agendador no `src`). Todos devem ser idempotentes.
+**Jobs agendados** — `POST /job/{job_name}` (`200` com `processed` e `outcomes`; job inexistente, `404 QIT000404`) ou `cd src && python -m jobs.<nome>`. O agendamento é da IF. Todos são idempotentes.
 
 | Job | O que faz |
 | --- | --- |
@@ -196,7 +198,7 @@ Gerais (`src/errors/base_error.py`):
 | `QIT000405` | 405 | Verbo não aceito na rota |
 | `QIT000500` | 500 | Erro inesperado |
 
-Do domínio (`src/errors/custom_errors.py`). `QIT001001`, `QIT001002`, `QIT001004`, `QIT001005` e `QIT001006` são aposentados e não voltam. De `QIT001053` a `QIT001065` estão reservados para as rotas previstas e ainda não existem no código. Próximo livre: `QIT001066`.
+Do domínio (`src/errors/custom_errors.py`). `QIT001001`, `QIT001002`, `QIT001004`, `QIT001005` e `QIT001006` são aposentados e não voltam. Próximo livre: `QIT001067`.
 
 | Código | HTTP | Quando |
 | --- | --- | --- |
@@ -221,7 +223,7 @@ Do domínio (`src/errors/custom_errors.py`). `QIT001001`, `QIT001002`, `QIT00100
 | `QIT001024` | 422 | Emoji na `pix_message` |
 | `QIT001025` | 422 | TED fora da janela sem `schedule_date` |
 | `QIT001026` | 422 | Devoluções acima do recebido |
-| `QIT001027` | 422 | Devolução depois de 90 dias (definido, ainda não aplicado pelo controller) |
+| `QIT001027` | 422 | Devolução depois de 90 dias |
 | `QIT001028` | 409 | Cancelar transferência que não está `SCHEDULED` |
 | `QIT001029` | 409 | Chave Pix já registrada |
 | `QIT001030` | 409 | Carteira viva já existe |
@@ -247,19 +249,20 @@ Do domínio (`src/errors/custom_errors.py`). `QIT001001`, `QIT001002`, `QIT00100
 | `QIT001050` | 422 | Dono do EI/MEI inexistente ou que não é pessoa natural |
 | `QIT001051` | 422 | Conta adicional para titular sem KYC aprovado |
 | `QIT001052` | 422 | Vínculo que não liga uma PJ a uma PF, ou vínculo repetido |
-| `QIT001053` | 422 | *Reservado.* Linha de crédito pedida para EI/MEI, que usa a linha do dono |
-| `QIT001054` | 422 | *Reservado.* `CUSTOMER_NOT_ELIGIBLE`: tomador com renda ou receita anual acima de R$ 360 mil |
-| `QIT001055` | 422 | *Reservado.* `OUT_OF_MPO_RULE`: linha ou contrato fora da regra do MPO (juros acima de 4% a.m., TAC acima de 3%, limite acima de R$ 21 mil); o corpo traz o campo e a regra violada |
-| `QIT001056` | 422 | *Reservado.* `NO_CREDIT_LINE`: patrimônio do tomador sem linha de crédito ativa |
-| `QIT001057` | 422 | *Reservado.* `INSUFFICIENT_LIMIT`: valor acima do limite disponível da linha |
-| `QIT001058` | 422 | *Reservado.* `REGULATORY_CAP_EXCEEDED`: o saldo de microcrédito do patrimônio passaria de R$ 21 mil na IF (Res. CMN 4.854/2020) |
-| `QIT001059` | 422 | *Reservado.* `AMOUNT_ABOVE_DUE`: pagamento acima do saldo devedor do contrato |
-| `QIT001060` | 422 | *Reservado.* `AMOUNT_ABOVE_INVOICE`: pagamento acima do saldo da fatura |
-| `QIT001061` | 422 | *Reservado.* `REVOLVING_CAP_EXCEEDED`: juros e encargos acumulados passariam de 100% da dívida original (Lei 14.690/2023) |
-| `QIT001062` | 404 | *Reservado.* Contrato não encontrado |
-| `QIT001063` | 409 | *Reservado.* Contrato já quitado |
-| `QIT001064` | 409 | *Reservado.* Fatura já paga |
-| `QIT001065` | 404 | *Reservado.* Patrimônio sem linha de crédito cadastrada (consulta) |
+| `QIT001053` | 422 | Linha de crédito pedida para EI/MEI, que usa a linha do dono |
+| `QIT001054` | 422 | `CUSTOMER_NOT_ELIGIBLE`: tomador com renda ou receita anual acima de R$ 360 mil |
+| `QIT001055` | 422 | `OUT_OF_MPO_RULE`: linha ou contrato fora da regra do MPO (juros acima de 4% a.m., TAC acima de 3%, limite acima de R$ 21 mil); o corpo traz o campo e a regra violada |
+| `QIT001056` | 422 | `NO_CREDIT_LINE`: patrimônio do tomador sem linha de crédito ativa |
+| `QIT001057` | 422 | `INSUFFICIENT_LIMIT`: valor acima do limite disponível da linha |
+| `QIT001058` | 422 | `REGULATORY_CAP_EXCEEDED`: o saldo de microcrédito do patrimônio passaria de R$ 21 mil na IF (Res. CMN 4.854/2020) |
+| `QIT001059` | 422 | `AMOUNT_ABOVE_DUE`: pagamento acima do saldo devedor do contrato |
+| `QIT001060` | 422 | `AMOUNT_ABOVE_INVOICE`: pagamento acima do saldo da fatura |
+| `QIT001061` | 422 | `REVOLVING_CAP_EXCEEDED`: juros e encargos acumulados passariam de 100% da dívida original (Lei 14.690/2023) |
+| `QIT001062` | 404 | Contrato não encontrado |
+| `QIT001063` | 409 | Contrato já quitado |
+| `QIT001064` | 409 | Fatura já paga |
+| `QIT001065` | 404 | Patrimônio sem linha de crédito cadastrada (consulta) |
+| `QIT001066` | 409 | Encargo em fatura que não está `OVERDUE` |
 
 ### Banco de Dados (somente diagrama)
 
@@ -320,7 +323,7 @@ Os fluxos são a página `fluxo-v8` do draw.io do time, recortada por fluxo. A c
 5. Titular, primeira conta, `account_status_event` e `outbox_event` (`baas.account.opened`) entram na mesma transação. O banco calcula `exposure_customer_id`, `fee_segment` e `microcredit_eligible`; a resposta `201` traz `microcredit_eligible`.
 6. Mais contas para o mesmo titular: `POST /customer/{customer_key}/account`, que exige KYC aprovado e abre a conta `ACTIVE`. Sócios e procuradores de uma PJ: `POST /customer/{customer_key}/relationship`, que só aceita PJ → PF.
 
-#### Fluxo 2 — Linha por patrimônio, contratação e desembolso (*previsto*)
+#### Fluxo 2 — Linha por patrimônio, contratação e desembolso
 
 &#91;image: Fluxo 2a — linha de microcrédito do patrimônio\]
 
@@ -353,14 +356,14 @@ Os fluxos são a página `fluxo-v8` do draw.io do time, recortada por fluxo. A c
 1. Cada trilho tem sua rota, como na API da QI; a tabela `transfer` é uma só para os três meios. A TEF fica em `POST /transfer`, entre contas da IF, e liquida na hora com `201`.
 2. Idempotência antes de qualquer trava. As contas são travadas em ordem de id, a idempotência é conferida de novo e só então vêm status (`ACTIVE`), tarifa por `fee_segment` (Pix de PF e EI/MEI é gratuito, Res. BCB 19/2020), saldo disponível (saldo − HOLDs) e limite noturno.
 3. Pix por chave tem dois passos: `GET /pix_key/{pix_key}?account_id=…` grava a consulta ao DICT e devolve o `end_to_end_id`; o envio (`POST /account/{account_key}/pix_transfer`) tem de usar esse e2e, da mesma conta, em até 15 minutos e uma vez só. O banco garante com FK composta e `UNIQUE`.
-4. Pix on-us liquida na hora (`201`); o externo debita contra `SPI_SETTLEMENT`, fica `SENT`, vai ao SPI fora da transação e responde `202`. TED (`POST /account/{account_key}/ted_transfer`) só sai na janela (dia útil, 6h30–17h) e debita contra `STR_SETTLEMENT`; com `schedule_date` fica `SCHEDULED`, sem débito, e pode ser cancelada com `PATCH /transfer/{transfer_key}/cancel` até a execução (o job `run_scheduled_teds` é previsto).
+4. Pix on-us liquida na hora (`201`); o externo debita contra `SPI_SETTLEMENT`, fica `SENT`, vai ao SPI fora da transação e responde `202`. TED (`POST /account/{account_key}/ted_transfer`) só sai na janela (dia útil, 6h30–17h) e debita contra `STR_SETTLEMENT`; com `schedule_date` fica `SCHEDULED`, sem débito, e pode ser cancelada com `PATCH /transfer/{transfer_key}/cancel` até a execução pelo job `run_scheduled_teds`.
 5. Pix rejeitado devolve valor e tarifa; TED devolvida devolve só o valor. O estorno entra na mesma transação que muda o status, e o ledger nunca recebe `UPDATE`.
 
 **3d · Pix e TED recebidos, e devolução de Pix**
 
 &#91;image: Fluxo 3d — Pix e TED recebidos e devolução\]
 
-O webhook confere o token, ignora `(rail, external_id)` já processado com `200` e credita a conta destino `ACTIVE` ou `BLOCKED`; conta que não pode receber gera devolução automática (`RETURNED`). O titular devolve um Pix recebido com `POST /account/{account_key}/incoming_transfer/{incoming_transfer_key}/reversal`, total ou parcial, sem passar da soma recebida. O prazo de 90 dias (`QIT001027`) está definido, mas o controller ainda não o aplica, nem confere saldo disponível ou se a entrada veio pelo SPI.
+O webhook confere o token, ignora `(rail, external_id)` já processado com `200` e credita a conta destino `ACTIVE` ou `BLOCKED`; conta que não pode receber gera devolução automática (`RETURNED`). O titular devolve um Pix recebido com `POST /account/{account_key}/incoming_transfer/{incoming_transfer_key}/reversal`, total ou parcial, sem passar da soma recebida. A devolução respeita o prazo de 90 dias (`QIT001027`), confere o saldo disponível (`QIT001017`) e recusa TED e devolução de devolução (`QIT001039`).
 
 **3e · Chaves Pix**
 
@@ -368,7 +371,7 @@ O webhook confere o token, ignora `(rail, external_id)` já processado com `200`
 
 O teto de chaves é por conta e segue o tipo do titular: 5 para `NATURAL`, 20 para `LEGAL`. Chave CPF ou CNPJ tem de ser o documento do próprio titular da conta, então a PF e o MEI dela registram cada um a sua. A conta é travada no registro, o que mantém o teto honesto com dois pedidos paralelos; a unicidade entre contas é do índice `ux_pix_key_active`.
 
-#### Fluxo 4 — Cobrança e pagamento de parcelas (*previsto*)
+#### Fluxo 4 — Cobrança e pagamento de parcelas
 
 &#91;image: Fluxo 4a — cobrança automática no vencimento\]
 
@@ -401,21 +404,18 @@ O extrato (`GET /account/{account_key}/statement`) lê o ledger por keyset (`(cr
 A carteira de crédito é da conta e tem o limite, o ciclo e os encargos; o cartão virtual, o físico e a reemissão consomem o mesmo limite e caem na mesma fatura. Cartão só de débito não tem carteira.
 
 1. A processadora chama `POST /card/authorization` em nome da IF emissora; `authorization_id` repetido devolve a mesma resposta, e recusa responde `200 DECLINED`, nunca `4xx`. Trava a conta e, se houver, a carteira; a primeira regra que falha decide o motivo: função do cartão, cartão `ACTIVE`, conta `ACTIVE`, carteira `ACTIVE` (crédito), limite ou saldo.
-2. **Débito:** confere o saldo disponível e cria um HOLD (`held_balance`); a captura (`POST /card/captures`) troca o HOLD pelo valor capturado e lança `DEBIT_PURCHASE`. O HOLD não capturado deve ser liberado em 7 dias pelo job `expire_authorizations` (previsto).
-3. **Crédito:** confere `total_limit − used_limit` e reserva; a captura vira itens nas faturas da carteira (a parcela k cai k−1 meses depois; os centavos que sobram da divisão vão na primeira; fatura nova nasce `OPEN` se a carteira não tem uma aberta, senão `FUTURE`), com vencimento ajustado a dia útil. O fechamento no dia de corte (`close_invoices`) é previsto.
-4. Estorno (`POST /card/refunds`) é evento (`REFUND` ou `PARTIAL_REFUND`), e a autorização segue `CAPTURED`. O pagamento da fatura (previsto) debita a conta e devolve o limite da carteira; fatura quitada fica `PAID`.
-5. **Rotativo (previsto):** fatura não quitada no vencimento fica `PARTIALLY_PAID` ou `OVERDUE` e grava `original_debt_amount`. A IF lança o encargo (`REVOLVING` ou `INSTALLMENT_PLAN`) em `POST /invoice/{invoice_key}/charge`; se juros e encargos acumulados passarem de 100% da dívida original (Lei 14.690/2023), a resposta é `422` (QIT001061); dentro do teto, o encargo vira `REVOLVING_CHARGE` na fatura aberta.
+2. **Débito:** confere o saldo disponível e cria um HOLD (`held_balance`); a captura (`POST /card/captures`) troca o HOLD pelo valor capturado e lança `DEBIT_PURCHASE`. O HOLD não capturado deve ser liberado em 7 dias pelo job `expire_authorizations`.
+3. **Crédito:** confere `total_limit − used_limit` e reserva; a captura vira itens nas faturas da carteira (a parcela k cai k−1 meses depois; os centavos que sobram da divisão vão na primeira; fatura nova nasce `OPEN` se a carteira não tem uma aberta, senão `FUTURE`), com vencimento ajustado a dia útil. O fechamento no dia de corte é do job `close_invoices`.
+4. Estorno (`POST /card/refunds`) é evento (`REFUND` ou `PARTIAL_REFUND`), e a autorização segue `CAPTURED`. O pagamento da fatura (`POST /invoice/{invoice_key}/payment`) debita a conta e devolve o limite da carteira; fatura quitada fica `PAID`.
+5. **Rotativo:** fatura não quitada no vencimento fica `PARTIALLY_PAID` ou `OVERDUE` e grava `original_debt_amount`. A IF lança o encargo (`REVOLVING` ou `INSTALLMENT_PLAN`) em `POST /invoice/{invoice_key}/charge`; se juros e encargos acumulados passarem de 100% da dívida original (Lei 14.690/2023), a resposta é `422` (QIT001061); dentro do teto, o encargo vira `REVOLVING_CHARGE` na própria fatura vencida e consome limite da carteira.
 
 ### Divergências conhecidas entre código, banco e este RFC
 
-Pontos encontrados na conferência de 08/10/2026, ainda não corrigidos no código:
+Os pontos da conferência de 08/10/2026 (parâmetros `*_id` nos resources, rota de DELETE da chave Pix, caminhos antigos nos testes, models com `id` UUID, FKs `UUID → BIGINT` no `database.sql` e as regras da devolução de Pix) foram corrigidos. Os models mapeiam as colunas `enum_*` com `PgEnum` (`src/models/types.py`).
 
-- **Nome dos parâmetros de caminho.** O `app.py` usa `{customer_key}`, `{account_key}`, `{wallet_key}`, … mas os resources ainda declaram `customer_id`, `account_id`, `wallet_id`, …. No FastAPI, parâmetro que não está no caminho vira query obrigatória; do jeito que está, essas rotas devem responder `400 QIT000010`. Os resources precisam ser renomeados para `*_key`.
-- **Rota de DELETE de chave Pix** fora do padrão: `/account/{account_id}/pix_keys/{pix_key_key}` (plural e `account_id`), e o resource espera `pix_key_id`. Deveria ser `/account/{account_key}/pix_key/{pix_key_key}`.
-- **Testes** (`tests/utils/request_generator.py`) ainda chamam os caminhos antigos, no plural.
-- **Modelos SQLAlchemy** ainda mapeiam `id` como UUID, enquanto o `database.sql` passou a `id BIGINT` + `key UUID`.
-- **`database.sql`:** `transfer.pix_key_inquiry_id` e `transfer.original_incoming_transfer_id` continuam `UUID`, mas apontam para `id BIGINT` (`fk_transfer_inquiry` e `fk_transfer_original_incoming`); o PostgreSQL recusa FK entre tipos incompatíveis. O cabeçalho do arquivo ainda fala em "Enums como TEXT + CHECK".
-- **Regras do RFC ainda não aplicadas:** prazo de 90 dias na devolução de Pix (`QIT001027`) e saldo disponível na devolução.
+Resta um, de documentação: os diagramas do `fluxo-v8` ainda mostram os caminhos no plural.
+
+As premissas D1 (o teto conta só o principal em aberto), D2 (sócio PF e sociedade têm tetos separados) e D3 (a base do rotativo é a `original_debt_amount`) estão aplicadas no código e nos testes. Se o time ou o Jurídico decidir diferente, mudam o controller e os testes `test_cash_goes_out_of_the_account_and_only_principal_returns_to_the_limit`, `test_ltda_of_a_partner_has_its_own_ceiling` e `test_charge_lands_on_the_overdue_invoice_up_to_the_original_debt`.
 
 ## Referências
 
