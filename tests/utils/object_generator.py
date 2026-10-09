@@ -12,6 +12,27 @@ def local_today() -> date:
     return datetime.now(ZoneInfo("America/Sao_Paulo")).date()
 
 
+def is_business_day(day: date) -> bool:
+    """Dia útil = não é fim de semana e não está na tabela holiday.
+
+    Mesma regra do CalendarRepository da API. Lê os feriados do próprio
+    banco (o seed do database.sql cadastra os nacionais), para o teste
+    não divergir da API quando um dia útil cai num feriado.
+    """
+    if day.weekday() >= 5:
+        return False
+    rows = DbUtils.execute("SELECT 1 FROM holiday WHERE date = :day", {"day": day})
+    return not rows
+
+
+def next_business_day_after(day: date) -> date:
+    """Primeiro dia útil ESTRITAMENTE depois de `day` (pula fim de semana e feriado)."""
+    day = day + timedelta(days=1)
+    while not is_business_day(day):
+        day = day + timedelta(days=1)
+    return day
+
+
 class ObjectGenerator:
     # ════════════════════════════════════════════════════════════════
     # Conta digital + microcrédito

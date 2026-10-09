@@ -4,7 +4,7 @@ from uuid import uuid4
 import pytest
 
 from tests.utils import ObjectGenerator, PayloadGenerator, RequestGenerator
-from tests.utils.object_generator import local_today
+from tests.utils.object_generator import is_business_day, local_today, next_business_day_after
 
 
 def key() -> str:
@@ -164,12 +164,10 @@ class TestCardAndTransferJobs:
         _, after = RequestGenerator.GET_credit_wallet(wallet["wallet_id"])
         assert after["used_limit"] == 0
 
-    @pytest.mark.skipif(local_today().weekday() >= 5, reason="o job só executa TED em dia útil, na janela do STR")
+    @pytest.mark.skipif(not is_business_day(local_today()), reason="o job só executa TED em dia útil, na janela do STR")
     def test_run_scheduled_teds_executes_the_ted_of_the_day(self):
         source = ObjectGenerator.create_active_account(initial_balance=50_000)
-        day = local_today() + timedelta(days=1)
-        while day.weekday() >= 5:
-            day += timedelta(days=1)
+        day = next_business_day_after(local_today())
         status, transfer = RequestGenerator.POST_ted_transfer(
             source["account_id"], PayloadGenerator.create_ted_payload(20_000, day.isoformat()), key()
         )

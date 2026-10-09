@@ -1022,3 +1022,39 @@ INSERT INTO fee (method, customer_segment, amount) VALUES
     ('PIX'::enum_transfer_method, 'BUSINESS'::enum_customer_segment, 0),
     ('TED'::enum_transfer_method, 'INDIVIDUAL'::enum_customer_segment, 1000),
     ('TED'::enum_transfer_method, 'BUSINESS'::enum_customer_segment, 1000);
+
+
+-- Feriados nacionais (Lei 662/1949, Lei 6.802/1980 e Lei 14.759/2023, que
+-- tornou 20/11 feriado nacional). Fixos e moveis (Carnaval, Sexta-feira
+-- Santa e Corpus Christi) de 2026 e 2027. Feriados estaduais e municipais
+-- ficam fora: a IF, que conhece a praca, informaria se preciso.
+-- Dia util = nao e sabado/domingo e nao esta aqui.
+INSERT INTO holiday (date, description) VALUES
+    -- 2026
+    ('2026-01-01', 'Confraternizacao Universal'),
+    ('2026-02-16', 'Carnaval'),
+    ('2026-02-17', 'Carnaval'),
+    ('2026-04-03', 'Sexta-feira Santa'),
+    ('2026-04-21', 'Tiradentes'),
+    ('2026-05-01', 'Dia do Trabalho'),
+    ('2026-06-04', 'Corpus Christi'),
+    ('2026-09-07', 'Independencia do Brasil'),
+    ('2026-10-12', 'Nossa Senhora Aparecida'),
+    ('2026-11-02', 'Finados'),
+    ('2026-11-15', 'Proclamacao da Republica'),
+    ('2026-11-20', 'Dia da Consciencia Negra'),
+    ('2026-12-25', 'Natal'),
+    -- 2027
+    ('2027-01-01', 'Confraternizacao Universal'),
+    ('2027-02-08', 'Carnaval'),
+    ('2027-02-09', 'Carnaval'),
+    ('2027-03-26', 'Sexta-feira Santa'),
+    ('2027-04-21', 'Tiradentes'),
+    ('2027-05-01', 'Dia do Trabalho'),
+    ('2027-05-27', 'Corpus Christi'),
+    ('2027-09-07', 'Independencia do Brasil'),
+    ('2027-10-12', 'Nossa Senhora Aparecida'),
+    ('2027-11-02', 'Finados'),
+    ('2027-11-15', 'Proclamacao da Republica'),
+    ('2027-11-20', 'Dia da Consciencia Negra'),
+    ('2027-12-25', 'Natal');
