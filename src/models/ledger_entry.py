@@ -2,6 +2,7 @@ from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func, Identity,
 from sqlalchemy.dialects.postgresql import UUID
 
 from models.base import Base
+from models.types import PgEnum
 
 
 class LedgerEntry(Base):
@@ -44,10 +45,10 @@ class LedgerEntry(Base):
     operation_id = Column(UUID(as_uuid=True), nullable=False)
     account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     amount = Column(BigInteger, nullable=False)
-    type = Column(String, nullable=False)
-    method = Column(String)
+    type = Column(PgEnum("enum_ledger_entry_type"), nullable=False)
+    method = Column(PgEnum("enum_ledger_method"))
     balance_after = Column(BigInteger)
-    reference_type = Column(String)
+    reference_type = Column(PgEnum("enum_reference_type"))
     reference_id = Column(BigInteger)  # id interno da entidade de referência
     external_id = Column(String)
     reversal_of_id = Column(BigInteger, ForeignKey("ledger_entry.id"))

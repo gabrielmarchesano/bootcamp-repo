@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 from models.incoming_transfer_status import IncomingTransferStatus
 
 
@@ -26,8 +27,8 @@ class IncomingTransfer(Base):
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
-    rail = Column(String, nullable=False)
-    pix_transfer_type = Column(String)
+    rail = Column(PgEnum("enum_transfer_rail"), nullable=False)
+    pix_transfer_type = Column(PgEnum("enum_pix_transfer_type"))
     external_id = Column(String, nullable=False)
     destination_account_id = Column(BigInteger, ForeignKey("account.id"))
     amount = Column(BigInteger, nullable=False)
