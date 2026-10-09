@@ -10,3 +10,6 @@ if not environ.get("APP_ENV") or environ.get("APP_ENV") == "local":
 
     if environ.get("SERVER_LOCALHOST") is None:
         environ["SERVER_LOCALHOST"] = "0.0.0.0"
+
+# Formato de erro do base-service: todo erro da API volta com estes campos, e só eles.
+ERROR_FIELDS = {"title", "description", "translation", "code"}
