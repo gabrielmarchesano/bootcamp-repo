@@ -19,6 +19,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 from models.installment_status import InstallmentStatus
 from models.loan_status import LoanStatus
 
@@ -148,8 +149,8 @@ class LoanPayment(Base):
     loan_id = Column(BigInteger, ForeignKey("loan.id"), nullable=False)
     idempotency_key = Column(String, unique=True)
     request_hash = Column(CHAR(64))
-    source = Column(String, nullable=False)
-    mode = Column(String)
+    source = Column(PgEnum("enum_loan_payment_source"), nullable=False)
+    mode = Column(PgEnum("enum_loan_payment_mode"))
     amount = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

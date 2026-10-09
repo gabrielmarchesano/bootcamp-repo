@@ -1,7 +1,8 @@
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, String, func
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 
 
 class CustomerRelationship(Base):
@@ -22,10 +23,10 @@ class CustomerRelationship(Base):
     ATTORNEY = "ATTORNEY"
 
     legal_customer_id = Column(BigInteger, ForeignKey("customer.id"), primary_key=True)
-    legal_person_type = Column(String, nullable=False, server_default="LEGAL")
+    legal_person_type = Column(PgEnum("enum_person_type"), nullable=False, server_default="LEGAL")
     natural_customer_id = Column(BigInteger, ForeignKey("customer.id"), primary_key=True)
-    natural_person_type = Column(String, nullable=False, server_default="NATURAL")
-    role = Column(String, primary_key=True)
+    natural_person_type = Column(PgEnum("enum_person_type"), nullable=False, server_default="NATURAL")
+    role = Column(PgEnum("enum_relationship_role"), primary_key=True)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 
     legal_customer = relationship("Customer", foreign_keys=[legal_customer_id], lazy="selectin")

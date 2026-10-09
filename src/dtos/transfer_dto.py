@@ -21,7 +21,7 @@ class TransferDTO:
         Os *_id da resposta são as keys públicas, nunca o id interno.
         """
         if transfer.on_us and transfer.destination_account_id is not None:
-            destination = {"account_id": _key(transfer.destination_account)}
+            destination = {"account_id": _key(transfer.destination_account_ref)}
         elif transfer.destination_ispb is not None:
             destination = {
                 "ispb": transfer.destination_ispb,

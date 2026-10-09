@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 from models.transfer_status import TransferStatus
 
 
@@ -30,8 +31,8 @@ class Transfer(Base):
     idempotency_key = Column(String, nullable=False, unique=True)
     request_hash = Column(CHAR(64), nullable=False)
     source_account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
-    method = Column(String, nullable=False)
-    pix_transfer_type = Column(String)
+    method = Column(PgEnum("enum_transfer_method"), nullable=False)
+    pix_transfer_type = Column(PgEnum("enum_pix_transfer_type"))
     amount = Column(BigInteger, nullable=False)
     fee = Column(BigInteger, nullable=False)
     status_id = Column(SmallInteger, ForeignKey(TransferStatus.id), nullable=False)
@@ -43,12 +44,12 @@ class Transfer(Base):
     destination_branch = Column(String)
     destination_account = Column(String)
     destination_account_digit = Column(CHAR(1))
-    destination_account_type = Column(String)
+    destination_account_type = Column(PgEnum("enum_external_account_type"))
     destination_document = Column(String)
     destination_name = Column(String)
     pix_message = Column(String(140))
     original_incoming_transfer_id = Column(BigInteger, ForeignKey("incoming_transfer.id"))
-    reversal_reason = Column(String)
+    reversal_reason = Column(PgEnum("enum_reversal_reason"))
     end_to_end_id = Column(String, unique=True)
     str_control_number = Column(String, unique=True)
     scheduled_for = Column(Date)
@@ -63,7 +64,9 @@ class Transfer(Base):
     # Só para o DTO expor a key pública das pontas. "select": lido sob demanda,
     # nunca junto do FOR UPDATE.
     source_account = relationship("Account", foreign_keys=[source_account_id], lazy="select")
-    destination_account = relationship("Account", foreign_keys=[destination_account_id], lazy="select")
+    # Não pode se chamar destination_account: esse nome é a coluna com o
+    # número da conta externa (Pix manual / TED) e o relationship a sobrescreveria.
+    destination_account_ref = relationship("Account", foreign_keys=[destination_account_id], lazy="select")
     original_incoming_transfer = relationship(
         "IncomingTransfer", foreign_keys=[original_incoming_transfer_id], lazy="select"
     )

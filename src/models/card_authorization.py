@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 from models.card_authorization_status import CardAuthorizationStatus
 
 
@@ -33,7 +34,7 @@ class CardAuthorization(Base):
     authorization_id = Column(String, nullable=False, unique=True)
     card_id = Column(BigInteger, ForeignKey("card.id"), nullable=False)
     account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
-    function = Column(String, nullable=False)
+    function = Column(PgEnum("enum_card_function"), nullable=False)
     amount = Column(BigInteger, nullable=False)
     authorized_amount = Column(BigInteger, nullable=False)
     captured_amount = Column(BigInteger, nullable=False)
@@ -43,7 +44,7 @@ class CardAuthorization(Base):
     mcc = Column(CHAR(4))
     status_id = Column(SmallInteger, ForeignKey(CardAuthorizationStatus.id), nullable=False)
     response_code = Column(CHAR(2), nullable=False)
-    denial_reason = Column(String)
+    denial_reason = Column(PgEnum("enum_denial_reason"))
     approval_code = Column(CHAR(6))
     expires_at = Column(DateTime(timezone=True))
     response_payload = Column(JSONB, nullable=False)

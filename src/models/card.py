@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 from models.card_status import CardStatus
 
 
@@ -27,11 +28,11 @@ class Card(Base):
     key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
     account_id = Column(BigInteger, ForeignKey("account.id"), nullable=False)
     wallet_id = Column(BigInteger, ForeignKey("credit_wallet.id"))
-    type = Column(String, nullable=False)
+    type = Column(PgEnum("enum_card_type"), nullable=False)
     pan_token = Column(String, nullable=False, unique=True)
     last4 = Column(CHAR(4), nullable=False)
-    brand = Column(String, nullable=False)
-    functions = Column(String, nullable=False)
+    brand = Column(PgEnum("enum_card_brand"), nullable=False)
+    functions = Column(PgEnum("enum_card_functions"), nullable=False)
     card_name = Column(String(15))
     printed_name = Column(String(26), nullable=False)
     contactless_enabled = Column(Boolean)

@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 
 
 class InvoicePayment(Base):
@@ -20,7 +21,7 @@ class InvoicePayment(Base):
     invoice_id = Column(BigInteger, ForeignKey("invoice.id"), nullable=False)
     idempotency_key = Column(String, unique=True)  # NULL no débito automático
     request_hash = Column(CHAR(64))
-    source = Column(String, nullable=False)
+    source = Column(PgEnum("enum_invoice_payment_source"), nullable=False)
     amount = Column(BigInteger, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
 

@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 
 
 class InvoiceItem(Base):
@@ -18,7 +19,7 @@ class InvoiceItem(Base):
     key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
     invoice_id = Column(BigInteger, ForeignKey("invoice.id"), nullable=False)
     card_authorization_id = Column(BigInteger, ForeignKey("card_authorization.id"))
-    type = Column(String, nullable=False)
+    type = Column(PgEnum("enum_invoice_item_type"), nullable=False)
     amount = Column(BigInteger, nullable=False)
     installment_number = Column(SmallInteger, nullable=False)
     installment_total = Column(SmallInteger, nullable=False)

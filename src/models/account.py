@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 
 from models.base import Base
+from models.types import PgEnum
 from models.account_status import AccountStatus
 
 
@@ -30,7 +31,7 @@ class Account(Base):
  
     id = Column(BigInteger, Identity(always=True), primary_key=True)
     key = Column(UUID(as_uuid=True), nullable=False, unique=True, default=uuid4)
-    type = Column(String, nullable=False)
+    type = Column(PgEnum("enum_account_type"), nullable=False)
     customer_id = Column(BigInteger, ForeignKey("customer.id"))
     internal_code = Column(String, unique=True)
     branch = Column(CHAR(4))
