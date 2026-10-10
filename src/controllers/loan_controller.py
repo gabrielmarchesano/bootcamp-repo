@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 from sqlalchemy.exc import IntegrityError
 
 from controllers.base_controller import BaseController
-from controllers.credit_line_controller import MPO_MAX_LIMIT
+from constants import MPO_MAX_LIMIT
 from dtos import LoanDTO
 from errors import (
     AccountNotActive,

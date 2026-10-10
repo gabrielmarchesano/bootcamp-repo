@@ -11,9 +11,10 @@ from utils.db_retry import retry_on_deadlock
 from utils.ids import parse_uuid
 
 # Guardrails do microcrédito produtivo orientado (Res. CMN 4.854/2020).
+from constants import MPO_MAX_LIMIT
+
 # O banco tem os mesmos tetos em CHECK; aqui eles viram 422 com o campo e a
 # regra, em vez de um erro de constraint.
-MPO_MAX_LIMIT = 2_100_000          # R$ 21 mil por tomador na mesma IF
 MPO_MAX_MONTHLY_RATE = Decimal("0.04")
 MPO_MAX_FEE_RATE = Decimal("0.03")
 

@@ -1,7 +1,17 @@
 from uuid import uuid4
 
+import sys
+from os.path import abspath, dirname, join
+
 from tests.conftest import ERROR_FIELDS
 from tests.utils import ObjectGenerator, PayloadGenerator, RequestGenerator
+
+# Adiciona src ao path para carregar a constante pura (sem inicializar o banco)
+src_path = abspath(join(dirname(__file__), "../../../src"))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from constants import MPO_MAX_LIMIT
 
 
 class TestCreditLine:
@@ -36,8 +46,14 @@ class TestCreditLine:
         """Res. CMN 4.854/2020: limite ≤ R$ 21 mil, juros ≤ 4% a.m., TAC ≤ 3% — QIT001055."""
         customer = ObjectGenerator.create_active_account()
 
+        # O valor exato do teto deve passar (200), assegurando que o CHECK constraint do BD 
+        # (<= 2100000) está alinhado com a constante do Python.
+        payload = PayloadGenerator.create_credit_line_payload(total_limit=MPO_MAX_LIMIT)
+        status, _ = RequestGenerator.PUT_credit_line(customer["customer_id"], payload)
+        assert status == 200, "O teto exato deve ser aceito sem erro 500 (CHECK do BD)."
+
         for field, value in (
-            ("total_limit", 2_100_001),
+            ("total_limit", MPO_MAX_LIMIT + 1),
             ("monthly_interest_rate", 0.041),
             ("origination_fee_rate", 0.031),
         ):
