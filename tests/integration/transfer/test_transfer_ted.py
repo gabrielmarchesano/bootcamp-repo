@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from tests.utils import ObjectGenerator, PayloadGenerator, RequestGenerator
+from tests.utils.object_generator import is_business_day, next_business_day_after
 
 # Tarifa de TED do seed (database/database.sql).
 TED_FEE = 1_000
@@ -20,16 +21,14 @@ def local_now() -> datetime:
 
 
 def ted_window_open() -> bool:
-    """Mesma regra da API: dia útil (sem feriados no seed), das 6h30 às 17h."""
+    """Mesma regra da API: dia útil (incl. feriados do seed), das 6h30 às 17h."""
     now = local_now()
-    return now.weekday() < 5 and time(6, 30) <= now.time() < time(17, 0)
+    return is_business_day(now.date()) and time(6, 30) <= now.time() < time(17, 0)
 
 
 def next_business_day() -> str:
-    day = local_now().date() + timedelta(days=1)
-    while day.weekday() >= 5:
-        day = day + timedelta(days=1)
-    return day.isoformat()
+    """Próximo dia útil (pula fim de semana E feriados), como a API faz."""
+    return next_business_day_after(local_now().date()).isoformat()
 
 
 needs_window = pytest.mark.skipif(not ted_window_open(), reason="TED imediata só roda na janela do STR (dia útil, 6h30–17h)")
