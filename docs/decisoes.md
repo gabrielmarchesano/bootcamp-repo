@@ -31,8 +31,8 @@ alteração; quando ela mudar, este arquivo diz o que o código assume hoje.
 | --- | --- |
 | 00:30 | `collect_installments` |
 | 01:00 | `close_invoices` |
-| 01:30 | `mark_overdue_invoices` |
-| 02:00 | `run_invoice_autopay` |
+| 01:30 | `run_invoice_autopay` |
+| 02:00 | `mark_overdue_invoices` |
 | 03:00 | `expire_authorizations` |
 | 06:30 | `run_scheduled_teds` (abertura do STR; só executa em dia útil) |
 | a cada 1 min | `dispatch_outbox_events` |

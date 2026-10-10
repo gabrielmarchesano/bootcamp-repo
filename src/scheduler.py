@@ -24,12 +24,13 @@ from jobs.runner import run
 BRASILIA = timezone(timedelta(hours=-3))
 
 # Diários, no horário de Brasília (HH, MM). A ordem importa: cobra as
-# parcelas, fecha e marca faturas, debita a fatura e só então solta HOLDs.
+# parcelas, fecha faturas, faz o débito automático (autopay) e só então
+# marca o que sobrou como atrasado (overdue). Por fim, solta HOLDs.
 DAILY = (
     ((0, 30), "collect_installments"),
     ((1, 0), "close_invoices"),
-    ((1, 30), "mark_overdue_invoices"),
-    ((2, 0), "run_invoice_autopay"),
+    ((1, 30), "run_invoice_autopay"),
+    ((2, 0), "mark_overdue_invoices"),
     ((3, 0), "expire_authorizations"),
     # Abertura da janela do STR (6h30). O job só executa em dia útil.
     ((6, 30), "run_scheduled_teds"),
