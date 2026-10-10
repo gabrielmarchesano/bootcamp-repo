@@ -22,7 +22,7 @@ class IncomingTransfer(Base):
     PIX_STATIC_QR_CODE = "STATIC_QR_CODE"
     PIX_DYNAMIC_QR_CODE = "DYNAMIC_QR_CODE"
     PIX_REVERSAL = "REVERSAL"  # devolução de um Pix que NÓS enviamos
-    
+
     # Os status moram em IncomingTransferStatus (tabela incoming_transfer_status).
 
     id = Column(BigInteger, Identity(always=True), primary_key=True)

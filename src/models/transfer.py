@@ -59,7 +59,6 @@ class Transfer(Base):
     updated_at = Column(DateTime(timezone=True), nullable=False, server_default=func.now())
     completed_at = Column(DateTime(timezone=True))
 
-    
     status = relationship("TransferStatus", foreign_keys=[status_id], lazy="selectin")
     # Só para o DTO expor a key pública das pontas. "select": lido sob demanda,
     # nunca junto do FOR UPDATE.

@@ -501,7 +501,7 @@ Os **jobs** são as tarefas do dia a dia do banco que ninguém pede: cobrar
 parcelas vencidas, fechar e vencer faturas, fazer o débito automático,
 executar TED agendada, conciliar com os trilhos, expirar autorizações de
 cartão e avisar a IF dos eventos. São oito, e todos podem rodar duas vezes
-sem mexer no dinheiro de novo. Quem agenda é a IF; para rodar um na mão:
+sem mexer no dinheiro de novo. O projeto possui um agendador próprio (veja `src/scheduler.py` ou suba o container `scheduler`); para rodar um na mão:
 
 ```bash
 curl -X POST http://localhost:3000/job/collect_installments \

@@ -26,6 +26,5 @@ class WebhookResource:
     def on_post_str(self, payload: dict) -> JSONResponse:
         controller = WebhookController()
         result = controller.str_(payload)
- 
+
         return JSONResponse(content=jsonable_encoder(result), status_code=http_status.HTTP_200_OK)
- 

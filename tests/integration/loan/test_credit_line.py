@@ -1,7 +1,17 @@
 from uuid import uuid4
 
+import sys
+from os.path import abspath, dirname, join
+
 from tests.conftest import ERROR_FIELDS
 from tests.utils import ObjectGenerator, PayloadGenerator, RequestGenerator
+
+# Adiciona src ao path para carregar a constante pura (sem inicializar o banco)
+src_path = abspath(join(dirname(__file__), "../../../src"))
+if src_path not in sys.path:
+    sys.path.append(src_path)
+
+from constants import MPO_MAX_LIMIT
 
 
 class TestCreditLine:
@@ -36,8 +46,14 @@ class TestCreditLine:
         """Res. CMN 4.854/2020: limite ≤ R$ 21 mil, juros ≤ 4% a.m., TAC ≤ 3% — QIT001055."""
         customer = ObjectGenerator.create_active_account()
 
+        # O valor exato do teto deve passar (200), assegurando que o CHECK constraint do BD 
+        # (<= 2100000) está alinhado com a constante do Python.
+        payload = PayloadGenerator.create_credit_line_payload(total_limit=MPO_MAX_LIMIT)
+        status, _ = RequestGenerator.PUT_credit_line(customer["customer_id"], payload)
+        assert status == 200, "O teto exato deve ser aceito sem erro 500 (CHECK do BD)."
+
         for field, value in (
-            ("total_limit", 2_100_001),
+            ("total_limit", MPO_MAX_LIMIT + 1),
             ("monthly_interest_rate", 0.041),
             ("origination_fee_rate", 0.031),
         ):
@@ -90,6 +106,57 @@ class TestCreditLine:
 
         line = ObjectGenerator.create_credit_line(borrower["customer_id"], total_limit=1_000_000)
         assert line["available_limit"] == 0, "nunca negativo"
+
+    def test_payment_after_lowering_does_not_reopen_limit_above_the_new_line(self):
+        """Bug 3.1: o pagamento não pode devolver limite acima do que a IF definiu.
+
+        Linha de R$ 20 mil, contrato de R$ 15 mil, IF reduz para R$ 10 mil,
+        pagamento de R$ 3 mil: o saldo (~R$ 12 mil) continua acima da linha,
+        então o disponível segue 0 e um novo contrato é recusado.
+        """
+        borrower = ObjectGenerator.create_borrower(total_limit=2_000_000)
+        loan = ObjectGenerator.create_loan(borrower["account_id"], amount=1_500_000)
+        ObjectGenerator.create_credit_line(borrower["customer_id"], total_limit=1_000_000)
+
+        status, payment = RequestGenerator.POST_loan_payment(
+            loan["loan_id"], {"amount": 300_000, "mode": "REDUCE_TERM"}, str(uuid4())
+        )
+        assert status == 201, payment
+
+        line = ObjectGenerator.credit_line_of(borrower["customer_id"])
+        assert line["microcredit_balance"] > line["total_limit"]
+        assert line["available_limit"] == 0
+
+        status, error = RequestGenerator.POST_loan(
+            borrower["account_id"], PayloadGenerator.create_loan_payload(100_000), str(uuid4())
+        )
+        assert status == 422
+        assert error["code"] == "QIT001057"
+
+    def test_payment_that_drops_balance_below_lowered_line_reopens_available_limit_partially(self):
+        """Teste complementar do Bug 3.1: reabertura parcial do limite.
+
+        Se a IF reduzir a linha, e os pagamentos baixarem o saldo para um valor
+        menor que a nova linha, o disponível não pode ficar travado em 0,
+        deve ser exatamente (nova_linha - saldo).
+        """
+        borrower = ObjectGenerator.create_borrower(total_limit=2_000_000)
+        loan = ObjectGenerator.create_loan(borrower["account_id"], amount=1_500_000)
+        ObjectGenerator.create_credit_line(borrower["customer_id"], total_limit=1_000_000)
+
+        # O saldo é ~R$ 15 mil. O teto é R$ 10 mil. O disponível é 0.
+        # Um pagamento de R$ 8 mil derruba o saldo para ~R$ 7 mil.
+        # Então o disponível tem que reabrir para ~R$ 3 mil.
+        status, payment = RequestGenerator.POST_loan_payment(
+            loan["loan_id"], {"amount": 800_000, "mode": "REDUCE_TERM"}, str(uuid4())
+        )
+        assert status == 201
+
+        line = ObjectGenerator.credit_line_of(borrower["customer_id"])
+        balance = line["microcredit_balance"]
+        
+        assert balance < line["total_limit"], "O saldo deve ter caído abaixo da nova linha"
+        assert line["available_limit"] == line["total_limit"] - balance, "O disponível não pode ficar travado em 0"
 
     def test_unknown_customer_and_missing_line_are_404(self):
         status, error = RequestGenerator.PUT_credit_line(str(uuid4()), PayloadGenerator.create_credit_line_payload())

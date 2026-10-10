@@ -15,6 +15,8 @@ class IfWebhookConnector(RestConnector):
 
     def __init__(self) -> None:
         super().__init__(__name__, IF_WEBHOOK_URL or "", IF_WEBHOOK_TIMEOUT, IF_WEBHOOK_TOKEN)
+        if not IF_WEBHOOK_URL:
+            self.logger.warning("IF_WEBHOOK_URL vazia: rodando em modo MOCK. Eventos não serão enviados de verdade.")
 
     def deliver(self, event_type: str, aggregate_type: str, aggregate_key: str, payload: dict, event_id: int) -> bool:
         """True se a IF confirmou (2xx). Timeout e erro de rede viram False: tenta de novo depois."""

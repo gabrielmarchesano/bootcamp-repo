@@ -1,6 +1,5 @@
 from typing import Tuple
 from datetime import date, datetime, time, timedelta, timezone
-from uuid import uuid4
 
 from sqlalchemy.exc import IntegrityError
 
@@ -62,16 +61,15 @@ from utils.pix import REVERSAL_PREFIX, generate_end_to_end_id, has_emoji
 # Janela da TED (STR): dia útil, das 6h30 às 17h, horário de Brasília.
 TED_WINDOW_START = time(6, 30)
 TED_WINDOW_END = time(17, 0)
- 
+
 # Devolução de Pix recebido: até 90 dias depois do recebimento (QI PXT000015).
 REVERSAL_WINDOW_DAYS = 90
- 
+
 # Status em que a conta de destino ainda recebe (mesma regra do webhook do SPI).
 CAN_RECEIVE = (AccountStatus.ACTIVE, AccountStatus.BLOCKED)
 
 # Teto noturno em centavos (Res. BCB 142/2021), igual ao usado nos testes.
 NIGHT_LIMIT = 100_000
- 
 
 
 class TransferController(BaseController):

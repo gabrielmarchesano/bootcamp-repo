@@ -42,6 +42,10 @@ REQUIRED_VARIABLES = ["DATABASE_URL", "INTERNAL_TOKEN"]
 # que saem daqui e o que o DICT mock devolve para as chaves da casa.
 OWN_ISPB = "13370001"
 
+# Guardrails do microcrédito produtivo orientado (Res. CMN 4.854/2020).
+# O banco tem os mesmos tetos em CHECK.
+MPO_MAX_LIMIT = 2_100_000          # R$ 21 mil por tomador na mesma IF
+
 
 def check_variables():
     missing = []
