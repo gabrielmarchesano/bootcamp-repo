@@ -145,6 +145,38 @@ class TestInvoiceJobs:
         assert ObjectGenerator.invoice_of(invoice["invoice_id"])["paid_amount"] == 0
         assert ObjectGenerator.balance_of(customer["account_id"]) == 10_000
 
+    def test_overdue_logic_and_autopay_interplay(self):
+        """Garante a decisão de agendamento: autopay roda antes do mark_overdue.
+
+        Se uma fatura vence hoje:
+        1. O autopay a quita (se houver saldo).
+        2. O mark_overdue NÃO a marca como atrasada (pois due_date < hoje).
+        """
+        c1, w1, card1 = self.setup_wallet(initial_balance=50_000, autopay=True)
+        c2, w2, card2 = self.setup_wallet(initial_balance=0, autopay=True)
+
+        ObjectGenerator.create_credit_purchase(card1["card_id"], 10_000)
+        ObjectGenerator.create_credit_purchase(card2["card_id"], 10_000)
+
+        inv1 = ObjectGenerator.open_invoice_of(w1["wallet_id"])
+        inv2 = ObjectGenerator.open_invoice_of(w2["wallet_id"])
+
+        ObjectGenerator.move_invoice_dates(inv1["invoice_id"], closing_days_ago=10, due_in_days=0)
+        ObjectGenerator.move_invoice_dates(inv2["invoice_id"], closing_days_ago=10, due_in_days=0)
+        ObjectGenerator.run_job("close_invoices")
+
+        ObjectGenerator.run_job("run_invoice_autopay")
+        assert ObjectGenerator.invoice_of(inv1["invoice_id"])["status"] == "PAID"
+        assert ObjectGenerator.invoice_of(inv2["invoice_id"])["status"] == "CLOSED"
+
+        ObjectGenerator.run_job("mark_overdue_invoices")
+        assert ObjectGenerator.invoice_of(inv1["invoice_id"])["status"] == "PAID"
+        assert ObjectGenerator.invoice_of(inv2["invoice_id"])["status"] == "CLOSED", "vence hoje, não está overdue"
+
+        ObjectGenerator.move_invoice_dates(inv2["invoice_id"], closing_days_ago=11, due_in_days=-1)
+        ObjectGenerator.run_job("mark_overdue_invoices")
+        assert ObjectGenerator.invoice_of(inv2["invoice_id"])["status"] == "OVERDUE"
+
 
 class TestCardAndTransferJobs:
     def test_expire_authorizations_releases_the_reserved_limit(self):
