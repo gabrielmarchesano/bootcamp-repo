@@ -9,7 +9,7 @@ if not environ.get("APP_ENV") or environ.get("APP_ENV") == "local":
     load_dotenv(path.join(str(root), ".env"))
 
     if environ.get("SERVER_LOCALHOST") is None:
-        environ["SERVER_LOCALHOST"] = "0.0.0.0"
+        environ["SERVER_LOCALHOST"] = "localhost"
 
 # Formato de erro do base-service: todo erro da API volta com estes campos, e só eles.
 ERROR_FIELDS = {"title", "description", "translation", "code"}
