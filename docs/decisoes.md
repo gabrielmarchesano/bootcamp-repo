@@ -44,7 +44,15 @@ o agendador, porque ele disputaria os itens que os testes de job contam. Para li
 
 ## Pendências que seguem abertas
 
-- **Teste instável:** `tests/integration/job/test_jobs.py::TestDispatchOutbox::test_pending_events_are_delivered_once`
-  passa isolado e falha na suíte inteira. Causa ainda não confirmada (ver nota no PR).
+- **Teste instável (não reproduziu):** `tests/integration/job/test_jobs.py::TestDispatchOutbox::test_pending_events_are_delivered_once`
+  foi relatado como falhando na suíte inteira. Em 10/10/2026 passou em duas suítes completas
+  seguidas (191 passed, 3 skipped), com banco limpo e com banco já usado. A suíte roda um teste
+  por vez, então "outros testes gerando eventos" não explica a falha. Se voltar a falhar,
+  procurar `job item ... failed` no log da API: um evento que dá exceção no despacho fica
+  `PENDING` sem somar tentativa e reaparece em toda execução. Com o agendador ligado
+  (`--profile scheduler`), o teste pode falhar, porque o agendador também despacha. Desligue o
+  agendador antes de rodar a suíte.
+- **Windows:** o `tests/conftest.py` usa `0.0.0.0` como host da API, e no Windows isso não
+  conecta. Rode com `SERVER_LOCALHOST=localhost` (no `.env` ou no terminal).
 - **Documentação manual:** fluxos do draw.io (`fluxo-v8`, caminhos no plural) e a RFC
   (trecho "O agendamento é da IF" muda com a decisão 4.2).
