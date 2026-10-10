@@ -6,7 +6,7 @@ from controllers import JobController
 
 
 class JobResource:
-    """Dispara um job agendado sob demanda (o agendador da IF, ou um teste).
+    """Dispara um job agendado sob demanda (útil para testes ou reprocessamento).
 
     Protegido pelo INTERNAL-TOKEN como toda rota interna. O mesmo job roda
     pela linha de comando: `python -m jobs.<nome>` (src/jobs).
