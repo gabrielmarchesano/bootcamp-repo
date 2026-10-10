@@ -133,6 +133,31 @@ class TestCreditLine:
         assert status == 422
         assert error["code"] == "QIT001057"
 
+    def test_payment_that_drops_balance_below_lowered_line_reopens_available_limit_partially(self):
+        """Teste complementar do Bug 3.1: reabertura parcial do limite.
+
+        Se a IF reduzir a linha, e os pagamentos baixarem o saldo para um valor
+        menor que a nova linha, o disponível não pode ficar travado em 0,
+        deve ser exatamente (nova_linha - saldo).
+        """
+        borrower = ObjectGenerator.create_borrower(total_limit=2_000_000)
+        loan = ObjectGenerator.create_loan(borrower["account_id"], amount=1_500_000)
+        ObjectGenerator.create_credit_line(borrower["customer_id"], total_limit=1_000_000)
+
+        # O saldo é ~R$ 15 mil. O teto é R$ 10 mil. O disponível é 0.
+        # Um pagamento de R$ 8 mil derruba o saldo para ~R$ 7 mil.
+        # Então o disponível tem que reabrir para ~R$ 3 mil.
+        status, payment = RequestGenerator.POST_loan_payment(
+            loan["loan_id"], {"amount": 800_000, "mode": "REDUCE_TERM"}, str(uuid4())
+        )
+        assert status == 201
+
+        line = ObjectGenerator.credit_line_of(borrower["customer_id"])
+        balance = line["microcredit_balance"]
+        
+        assert balance < line["total_limit"], "O saldo deve ter caído abaixo da nova linha"
+        assert line["available_limit"] == line["total_limit"] - balance, "O disponível não pode ficar travado em 0"
+
     def test_unknown_customer_and_missing_line_are_404(self):
         status, error = RequestGenerator.PUT_credit_line(str(uuid4()), PayloadGenerator.create_credit_line_payload())
         assert status == 404
